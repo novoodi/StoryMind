@@ -127,6 +127,29 @@ class IngestParserTest {
     }
 
     @Test
+    fun `collapses a stray quote-comma fragment between two real object members`() {
+        val raw = """
+            {
+              "chapter_summary": "요약",
+              "entities": [
+                {
+                  "id": "엘라시움",      ",
+                  "type": "place",      "name": "엘라시움",      ",
+                  "desc": "장소 설명"
+                }
+              ],
+              "relations": []
+            }
+        """.trimIndent()
+
+        val result = IngestParser.parse(raw)
+
+        assertEquals(1, result.entities.size)
+        assertEquals("엘라시움", result.entities[0].id)
+        assertEquals("장소 설명", result.entities[0].desc)
+    }
+
+    @Test
     fun `skips entities with a type outside the four allowed values`() {
         val raw = """
             {

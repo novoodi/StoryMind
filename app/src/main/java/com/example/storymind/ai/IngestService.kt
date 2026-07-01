@@ -1,5 +1,6 @@
 package com.example.storymind.ai
 
+import android.util.Log
 import com.example.storymind.data.GraphEdge
 import com.example.storymind.data.GraphNode
 import com.example.storymind.data.WikiEntry
@@ -32,7 +33,10 @@ class IngestService(private val engine: OnDeviceTextEngine) {
      * [existingWiki] carries entities already established in earlier chapters. It's forwarded
      * to the model as context so it reuses their ids/names, and also backs a name-based safety
      * net here: if the model still mints a fresh id for something whose name matches an existing
-     * entry, that id is rewritten to the established one before nodes/edges are built.
+     * entry, that id is rewritten to the established one before nodes/edges are built. The match
+     * falls back from exact name equality to a suffix check (either name ending with the other)
+     * so a dropped-surname nickname the model reaches for later — "이지민" becoming "지민" — still
+     * resolves to the same entity instead of minting a duplicate.
      */
     suspend fun ingest(
         chapterLabel: String,
@@ -41,17 +45,29 @@ class IngestService(private val engine: OnDeviceTextEngine) {
         existingWiki: List<WikiEntry> = emptyList(),
     ): IngestResult {
         val prompt = IngestSchema.buildIngestPrompt(title, paragraphs, existingWiki)
-        val raw = engine.generate(prompt)
-        val parsed = IngestParser.parse(raw)
+        val parsed = generateParsed(prompt)
 
         val idByName = existingWiki.associateBy({ it.name.trim() }, { it.id })
+        fun matchExistingId(name: String): String? {
+            val trimmed = name.trim()
+            idByName[trimmed]?.let { return it }
+            return idByName.entries.firstOrNull { (existingName, _) ->
+                minOf(existingName.length, trimmed.length) >= MIN_NAME_SUFFIX_MATCH_LENGTH &&
+                    (existingName.endsWith(trimmed) || trimmed.endsWith(existingName))
+            }?.value
+        }
         val idRemap = parsed.entities
             .filter { it.id !in idByName.values }
-            .mapNotNull { entity -> idByName[entity.name.trim()]?.let { entity.id to it } }
+            .mapNotNull { entity -> matchExistingId(entity.name)?.let { entity.id to it } }
             .toMap()
         fun resolvedId(id: String) = idRemap[id] ?: id
 
-        val wikiEntries = parsed.entities.map { entity ->
+        // Gemma occasionally lists the same entity twice in one response (under the same id, or
+        // under two names that resolve to the same id via matchExistingId). Keeping only the last
+        // occurrence stops that chapter's wiki/graph update from double-counting a single entity.
+        val dedupedEntities = parsed.entities.associateBy { resolvedId(it.id) }.values.toList()
+
+        val wikiEntries = dedupedEntities.map { entity ->
             WikiEntry(
                 id = resolvedId(entity.id),
                 type = entity.type,
@@ -61,7 +77,7 @@ class IngestService(private val engine: OnDeviceTextEngine) {
             )
         }
 
-        val nodes = parsed.entities.map { entity ->
+        val nodes = dedupedEntities.map { entity ->
             GraphNode(id = resolvedId(entity.id), type = entity.type, label = entity.name, x = 0f, y = 0f)
         }
 
@@ -80,5 +96,33 @@ class IngestService(private val engine: OnDeviceTextEngine) {
             edges = edges,
             orphanIds = orphanIds,
         )
+    }
+
+    /**
+     * Gemma occasionally breaks its own JSON schema in a different way each time (a dropped key,
+     * a doubled brace, a stray token) — one-off decoding slips rather than a pattern worth chasing
+     * with more regex repairs. Since the same slip is unlikely to repeat on a fresh generation,
+     * retrying the whole prompt is cheap insurance against losing a chapter's wiki data to it.
+     * Only after [MAX_ATTEMPTS] straight parse failures do we accept [IngestParser.parse]'s empty
+     * fallback.
+     */
+    private suspend fun generateParsed(prompt: String): ParsedIngest {
+        lateinit var raw: String
+        repeat(MAX_ATTEMPTS) { attempt ->
+            raw = engine.generate(prompt)
+            IngestParser.parseOrNull(raw)?.let { return it }
+            val attemptsLeft = MAX_ATTEMPTS - attempt - 1
+            Log.w(TAG, "Ingest JSON parse failed (attempt ${attempt + 1}/$MAX_ATTEMPTS), $attemptsLeft retries left")
+        }
+        return IngestParser.parse(raw)
+    }
+
+    companion object {
+        private const val TAG = "IngestService"
+        private const val MAX_ATTEMPTS = 3
+
+        /** Shortest name either side of a suffix match may be, to keep single-character names
+         * (rare, but not impossible) from matching almost anything by coincidence. */
+        private const val MIN_NAME_SUFFIX_MATCH_LENGTH = 2
     }
 }

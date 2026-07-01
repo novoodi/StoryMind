@@ -11,9 +11,9 @@ import org.junit.Test
 class ChapterProgressTest {
 
     @Test
-    fun `merge keeps an existing node's position and refreshes its wiki entry`() {
+    fun `merge keeps an existing node's position and appends this chapter's description`() {
         val progress = ChapterProgress(
-            wikiEntries = listOf(WikiEntry("yul", SmBadgeType.Character, "율", "1장 설명", "1장")),
+            wikiEntries = listOf(WikiEntry("yul", SmBadgeType.Character, "율", "1장: 1장 설명", "1장")),
             nodes = listOf(GraphNode("yul", SmBadgeType.Character, "율", 12f, 34f)),
             edges = emptyList(),
             orphanIds = setOf("yul"),
@@ -31,7 +31,7 @@ class ChapterProgressTest {
         assertEquals(1, merged.nodes.size)
         assertEquals(12f, merged.nodes[0].x)
         assertEquals(34f, merged.nodes[0].y)
-        assertEquals("2장 설명", merged.wikiEntries.single { it.id == "yul" }.desc)
+        assertEquals("1장: 1장 설명\n2장: 2장 설명", merged.wikiEntries.single { it.id == "yul" }.desc)
         assertEquals("2장", merged.wikiEntries.single { it.id == "yul" }.chapter)
     }
 

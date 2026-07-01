@@ -1,18 +1,14 @@
 package com.example.storymind.ui.screens
 
 import androidx.compose.animation.core.Animatable
-import androidx.compose.animation.core.RepeatMode
-import androidx.compose.animation.core.animateFloat
-import androidx.compose.animation.core.infiniteRepeatable
 import androidx.compose.animation.core.keyframes
-import androidx.compose.animation.core.rememberInfiniteTransition
-import androidx.compose.animation.core.tween
 import androidx.compose.foundation.background
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.Column
 import androidx.compose.foundation.layout.Row
 import androidx.compose.foundation.layout.Spacer
+import androidx.compose.foundation.layout.defaultMinSize
 import androidx.compose.foundation.layout.fillMaxSize
 import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.layout.height
@@ -21,24 +17,26 @@ import androidx.compose.foundation.layout.size
 import androidx.compose.foundation.layout.width
 import androidx.compose.foundation.rememberScrollState
 import androidx.compose.foundation.shape.CircleShape
+import androidx.compose.foundation.text.BasicTextField
 import androidx.compose.foundation.verticalScroll
 import androidx.compose.material3.Text
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.LaunchedEffect
-import androidx.compose.runtime.getValue
 import androidx.compose.runtime.remember
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
-import androidx.compose.ui.draw.alpha
 import androidx.compose.ui.draw.clip
 import androidx.compose.ui.draw.drawBehind
 import androidx.compose.ui.graphics.graphicsLayer
+import androidx.compose.ui.text.TextStyle
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.text.style.TextAlign
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
-import com.example.storymind.data.MockData
+import androidx.compose.ui.graphics.SolidColor
 import com.example.storymind.ui.components.SmAiStatus
+import com.example.storymind.ui.components.SmButton
+import com.example.storymind.ui.components.SmButtonSize
 import com.example.storymind.ui.components.SmIconButton
 import com.example.storymind.ui.components.SmStatusBadge
 import com.example.storymind.ui.components.SmToolbar
@@ -47,22 +45,31 @@ import com.example.storymind.ui.icons.SmIcons
 import com.example.storymind.ui.theme.Pretendard
 import com.example.storymind.ui.theme.SmColors
 
+/** A previously saved chapter, shown read-only above the active draft. */
+data class EditorChapterSnapshot(val label: String, val title: String?, val body: String)
+
 /**
  * The writing surface — mirrors the prototype's EditorScreen. AI status pill,
- * chapter body, empty state, and a bottom formatting bar (bold/italic/link).
+ * chapter body, empty state, and a bottom formatting bar (bold/italic/link/char count/save).
  * `shakeTrigger` increments to replay the 200ms conflict-warning shake.
  */
 @Composable
 fun EditorScreen(
     aiStatus: SmAiStatus,
     shakeTrigger: Int,
-    isEmpty: Boolean,
+    canAdvance: Boolean,
+    previousChapters: List<EditorChapterSnapshot>,
+    currentLabel: String,
+    currentBody: String,
+    onBodyChange: (String) -> Unit,
+    onSave: () -> Unit,
+    onNextChapter: () -> Unit,
     onWikiOpen: () -> Unit,
     modifier: Modifier = Modifier,
 ) {
     Column(modifier = modifier.fillMaxSize()) {
         SmToolbar(
-            title = "${MockData.chapters.last().label} — ${MockData.chapters.first().title}",
+            title = previousChapters.firstOrNull()?.title?.let { "$currentLabel — $it" } ?: currentLabel,
             left = {
                 Text(
                     text = "← 소설",
@@ -79,25 +86,36 @@ fun EditorScreen(
             },
         )
         Box(modifier = Modifier.weight(1f)) {
-            if (isEmpty) {
-                EditorEmptyState()
-            } else {
-                EditorBody(shakeTrigger = shakeTrigger)
-            }
+            EditorBody(
+                shakeTrigger = shakeTrigger,
+                previousChapters = previousChapters,
+                currentLabel = currentLabel,
+                currentBody = currentBody,
+                onBodyChange = onBodyChange,
+            )
         }
-        EditorFormatBar()
+        EditorFormatBar(
+            charCount = currentBody.length,
+            canSave = currentBody.isNotBlank(),
+            saving = aiStatus == SmAiStatus.Analyzing,
+            justSaved = canAdvance,
+            onSave = onSave,
+            onNextChapter = onNextChapter,
+        )
     }
 }
 
+/**
+ * Decorative first-chapter hint. Purely visual — no pointer input — so it can sit on top of
+ * the real [BasicTextField] and taps still reach the field underneath for focus.
+ */
 @Composable
-private fun EditorEmptyState() {
+private fun FirstChapterHint(modifier: Modifier = Modifier) {
     Column(
-        modifier = Modifier
-            .fillMaxSize()
-            .background(SmColors.surfaceBase)
-            .padding(horizontal = 44.dp),
+        modifier = modifier
+            .fillMaxWidth()
+            .padding(horizontal = 44.dp, vertical = 32.dp),
         horizontalAlignment = Alignment.CenterHorizontally,
-        verticalArrangement = Arrangement.Center,
     ) {
         Box(
             modifier = Modifier
@@ -145,7 +163,13 @@ private fun EditorEmptyState() {
 }
 
 @Composable
-private fun EditorBody(shakeTrigger: Int) {
+private fun EditorBody(
+    shakeTrigger: Int,
+    previousChapters: List<EditorChapterSnapshot>,
+    currentLabel: String,
+    currentBody: String,
+    onBodyChange: (String) -> Unit,
+) {
     val shakeX = remember { Animatable(0f) }
     LaunchedEffect(shakeTrigger) {
         if (shakeTrigger > 0) {
@@ -171,7 +195,7 @@ private fun EditorBody(shakeTrigger: Int) {
             .verticalScroll(scroll)
             .padding(horizontal = 22.dp, vertical = 22.dp),
     ) {
-        MockData.chapters.forEachIndexed { index, chapter ->
+        previousChapters.forEachIndexed { index, chapter ->
             if (index > 0) {
                 Text(
                     text = chapter.label,
@@ -193,7 +217,7 @@ private fun EditorBody(shakeTrigger: Int) {
                     modifier = Modifier.padding(bottom = 18.dp),
                 )
             }
-            chapter.paragraphs.forEach { paragraph ->
+            chapter.body.split(Regex("\n+")).filter { it.isNotBlank() }.forEach { paragraph ->
                 Text(
                     text = paragraph,
                     color = SmColors.textPrimary,
@@ -204,24 +228,60 @@ private fun EditorBody(shakeTrigger: Int) {
                 )
             }
         }
-        val transition = rememberInfiniteTransition(label = "cursor")
-        val cursorAlpha by transition.animateFloat(
-            initialValue = 1f, targetValue = 0.35f,
-            animationSpec = infiniteRepeatable(tween(1000), RepeatMode.Reverse),
-            label = "cursorAlpha",
-        )
-        Box(
-            modifier = Modifier
-                .width(2.dp)
-                .height(18.dp)
-                .alpha(cursorAlpha)
-                .background(SmColors.brand)
-        )
+
+        if (previousChapters.isNotEmpty()) {
+            Text(
+                text = currentLabel,
+                color = SmColors.textTertiary,
+                fontFamily = Pretendard,
+                fontWeight = FontWeight.Bold,
+                fontSize = 13.sp,
+                modifier = Modifier.padding(top = 10.dp, bottom = 10.dp),
+            )
+        }
+
+        val isFirstEverChapter = previousChapters.isEmpty()
+        Box(modifier = Modifier.fillMaxWidth()) {
+            BasicTextField(
+                value = currentBody,
+                onValueChange = onBodyChange,
+                textStyle = TextStyle(
+                    color = SmColors.textPrimary,
+                    fontFamily = Pretendard,
+                    fontSize = 18.sp,
+                    lineHeight = 32.sp,
+                ),
+                cursorBrush = SolidColor(SmColors.brand),
+                modifier = Modifier.fillMaxWidth().defaultMinSize(minHeight = 420.dp),
+                decorationBox = { innerTextField ->
+                    if (currentBody.isEmpty() && !isFirstEverChapter) {
+                        Text(
+                            text = "이어서 써보세요…",
+                            color = SmColors.textTertiary,
+                            fontFamily = Pretendard,
+                            fontSize = 18.sp,
+                            lineHeight = 32.sp,
+                        )
+                    }
+                    innerTextField()
+                },
+            )
+            if (currentBody.isEmpty() && isFirstEverChapter) {
+                FirstChapterHint(modifier = Modifier.align(Alignment.Center))
+            }
+        }
     }
 }
 
 @Composable
-private fun EditorFormatBar() {
+private fun EditorFormatBar(
+    charCount: Int,
+    canSave: Boolean,
+    saving: Boolean,
+    justSaved: Boolean,
+    onSave: () -> Unit,
+    onNextChapter: () -> Unit,
+) {
     val borderColor = SmColors.borderDefault
     Row(
         modifier = Modifier
@@ -244,11 +304,28 @@ private fun EditorFormatBar() {
         SmIconButton(icon = SmIcons.Link, onClick = {}, iconSize = 18.dp)
         Spacer(Modifier.weight(1f))
         Text(
-            text = "128자",
+            text = "${charCount}자",
             color = SmColors.textTertiary,
             fontFamily = Pretendard,
             fontSize = 12.sp,
-            modifier = Modifier.padding(end = 8.dp),
+            modifier = Modifier.padding(end = 12.dp),
         )
+        if (justSaved) {
+            SmButton(
+                text = "다음 화 쓰기",
+                onClick = onNextChapter,
+                size = SmButtonSize.Sm,
+                modifier = Modifier.padding(end = 4.dp),
+            )
+        } else {
+            SmButton(
+                text = "저장",
+                onClick = onSave,
+                enabled = canSave && !saving,
+                loading = saving,
+                size = SmButtonSize.Sm,
+                modifier = Modifier.padding(end = 4.dp),
+            )
+        }
     }
 }

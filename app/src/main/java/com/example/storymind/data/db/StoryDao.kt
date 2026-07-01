@@ -1,0 +1,81 @@
+package com.example.storymind.data.db
+
+import androidx.room.Dao
+import androidx.room.Insert
+import androidx.room.OnConflictStrategy
+import androidx.room.Query
+import androidx.room.Transaction
+import kotlinx.coroutines.flow.Flow
+
+@Dao
+interface StoryDao {
+
+    @Insert(onConflict = OnConflictStrategy.REPLACE)
+    suspend fun upsertChapter(chapter: ChapterEntity)
+
+    @Query("SELECT * FROM chapters ORDER BY chapterIndex ASC")
+    fun observeChapters(): Flow<List<ChapterEntity>>
+
+    @Query("SELECT * FROM chapters ORDER BY chapterIndex ASC")
+    suspend fun loadChapters(): List<ChapterEntity>
+
+    @Query("DELETE FROM wiki_entries")
+    suspend fun clearWikiEntries()
+
+    @Insert(onConflict = OnConflictStrategy.REPLACE)
+    suspend fun insertWikiEntries(entries: List<WikiEntryEntity>)
+
+    @Query("DELETE FROM graph_nodes")
+    suspend fun clearNodes()
+
+    @Insert(onConflict = OnConflictStrategy.REPLACE)
+    suspend fun insertNodes(nodes: List<GraphNodeEntity>)
+
+    @Query("DELETE FROM graph_edges")
+    suspend fun clearEdges()
+
+    @Insert(onConflict = OnConflictStrategy.REPLACE)
+    suspend fun insertEdges(edges: List<GraphEdgeEntity>)
+
+    @Query("DELETE FROM orphan_ids")
+    suspend fun clearOrphans()
+
+    @Insert(onConflict = OnConflictStrategy.REPLACE)
+    suspend fun insertOrphans(orphans: List<OrphanIdEntity>)
+
+    @Query("SELECT * FROM wiki_entries")
+    suspend fun loadWikiEntries(): List<WikiEntryEntity>
+
+    @Query("SELECT * FROM graph_nodes")
+    suspend fun loadNodes(): List<GraphNodeEntity>
+
+    @Query("SELECT * FROM graph_edges")
+    suspend fun loadEdges(): List<GraphEdgeEntity>
+
+    @Query("SELECT * FROM orphan_ids")
+    suspend fun loadOrphans(): List<OrphanIdEntity>
+
+    /**
+     * Replaces the entire accumulated wiki/graph snapshot in one transaction. `merge()` already
+     * recomputes all four tables from scratch on every chapter, so a full replace here mirrors
+     * that and avoids having to hand-write insert/update/delete diffing for each table.
+     */
+    @Transaction
+    suspend fun replaceProgress(snapshot: ChapterProgressSnapshot) {
+        clearWikiEntries()
+        insertWikiEntries(snapshot.wikiEntries)
+        clearNodes()
+        insertNodes(snapshot.nodes)
+        clearEdges()
+        insertEdges(snapshot.edges)
+        clearOrphans()
+        insertOrphans(snapshot.orphans)
+    }
+
+    suspend fun loadProgress(): ChapterProgressSnapshot = ChapterProgressSnapshot(
+        wikiEntries = loadWikiEntries(),
+        nodes = loadNodes(),
+        edges = loadEdges(),
+        orphans = loadOrphans(),
+    )
+}

@@ -31,7 +31,6 @@ object IngestSchema {
             }
         }
         return """
-            <|think|>
             당신은 소설 원고를 분석해서 위키 데이터를 추출하는 어시스턴트입니다.
 
             할 일:
@@ -42,20 +41,25 @@ object IngestSchema {
 
             반드시 지킬 규칙:
             - entities[].type 값은 "character", "place", "item", "event" 4가지 중 하나만 사용한다. 그 외 값은 절대 쓰지 않는다.
+            - entities[].desc는 절대 비워두거나 생략하지 않는다. 모든 엔티티는 반드시 "desc" 키와 그 값(한 줄 설명, 최소 5자 이상)을 가져야 한다. desc가 없는 엔티티는 잘못된 출력이다.
             - 노드의 좌표(x, y) 같은 위치 정보는 만들지 않는다. 이 프롬프트가 다루는 범위가 아니다.
             - 어떤 엔티티가 다른 엔티티와 연결되어 있는지 여부(고아/미연결 판정)를 스스로 판단해서 표시하지 않는다. 관계(relations)만 사실대로 나열하면 된다.
+            - 이 작업은 단순 추출이다. 분석 과정이나 생각 과정을 출력하지 말고, 추론 없이 곧바로 최종 JSON만 출력한다.
             - 최종 출력은 아래 스키마에 맞는 JSON 하나뿐이어야 한다. JSON 앞뒤로 설명, 인사말, 마크다운 코드펜스 등 어떤 텍스트도 남기지 않는다.
             $existingBlock
-            출력 JSON 스키마:
+            출력 JSON 스키마 (모든 필드 필수, desc 생략 금지):
             {
               "chapter_summary": "이 화의 3~4문장 요약",
               "entities": [
-                {"id":"고유영문/한글 식별자","type":"character|place|item|event","name":"표시 이름","desc":"한 줄 설명"}
+                {"id":"고유영문/한글 식별자","type":"character|place|item|event","name":"표시 이름","desc":"한 줄 설명 (필수, 비워두지 말 것)"}
               ],
               "relations": [
                 {"from":"엔티티 id","to":"엔티티 id"}
               ]
             }
+
+            entities 항목 올바른 예시 (모든 필드가 채워져 있어야 한다):
+            {"id":"수인","type":"character","name":"수인","desc":"과거의 기억을 잃은 채 마을에 도착한 떠돌이"}
 
             분석할 원고
             화 제목: $chapterTitle

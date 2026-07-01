@@ -1,6 +1,5 @@
 package com.example.storymind.ui
 
-import android.util.Log
 import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.Column
 import androidx.compose.foundation.layout.fillMaxSize
@@ -8,95 +7,42 @@ import androidx.compose.foundation.layout.navigationBarsPadding
 import androidx.compose.foundation.layout.statusBarsPadding
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.LaunchedEffect
+import androidx.compose.runtime.collectAsState
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableIntStateOf
 import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.remember
 import androidx.compose.runtime.setValue
 import androidx.compose.ui.Modifier
-import androidx.compose.ui.platform.LocalContext
-import androidx.compose.ui.platform.LocalInspectionMode
-import com.example.storymind.ai.ChapterProgress
-import com.example.storymind.ai.IngestService
-import com.example.storymind.ai.OnDeviceEngine
-import com.example.storymind.ai.merge
-import com.example.storymind.data.MockData
-import com.example.storymind.ui.components.SmAiStatus
+import androidx.lifecycle.viewmodel.compose.viewModel
 import com.example.storymind.ui.components.SmBottomSheet
 import com.example.storymind.ui.components.SmNavBar
 import com.example.storymind.ui.components.SmSheetAction
 import com.example.storymind.ui.components.SmTab
 import com.example.storymind.ui.components.SmWikiDrawer
 import com.example.storymind.ui.screens.BrainScreen
+import com.example.storymind.ui.screens.EditorChapterSnapshot
 import com.example.storymind.ui.screens.EditorScreen
 import com.example.storymind.ui.screens.SettingsScreen
 import com.example.storymind.ui.screens.WikiScreen
-
-private const val TAG = "StoryMindApp"
 
 /**
  * App root — mirrors the prototype's App component: tab switching, the
  * editor's AI status, the wiki drawer, and the warning bottom sheet.
  *
- * On first composition (skipped in Compose previews), runs an on-device ingest pass over
- * every chapter in MockData.chapters, in order, feeding each chapter the wiki entries
- * accumulated from the ones before it so recurring entities keep a stable id. Swaps the
- * MockData preview content for the real, merged result once it lands.
+ * Writing/ingest state (chapters, wiki, graph, AI status) is owned by [StoryViewModel],
+ * which persists to Room so it survives process death. Only pure navigation state
+ * (active tab, drawer/sheet open, shake replay) stays local to this composable.
  */
 @Composable
 fun StoryMindApp(modifier: Modifier = Modifier) {
+    val viewModel: StoryViewModel = viewModel()
+    val uiState by viewModel.uiState.collectAsState()
+
     var tab by remember { mutableStateOf(SmTab.Editor) }
     var warningOpen by remember { mutableStateOf(false) }
     var drawerOpen by remember { mutableStateOf(false) }
     var shakeTrigger by remember { mutableIntStateOf(0) }
-    var aiStatus by remember { mutableStateOf(SmAiStatus.Analyzing) }
-
-    var wikiEntries by remember { mutableStateOf(MockData.wiki) }
-    var graphNodes by remember { mutableStateOf(MockData.nodes) }
-    var graphEdges by remember { mutableStateOf(MockData.edges) }
-    var orphanIds by remember {
-        val connected = MockData.edges.flatMap { listOf(it.from, it.to) }.toSet()
-        mutableStateOf(MockData.nodes.map { it.id }.toSet() - connected)
-    }
-
-    val context = LocalContext.current
-    val inPreview = LocalInspectionMode.current
-
-    LaunchedEffect(Unit) {
-        if (inPreview) return@LaunchedEffect
-
-        val engine = OnDeviceEngine(context)
-        if (!engine.isModelAvailable) {
-            aiStatus = SmAiStatus.Idle
-            return@LaunchedEffect
-        }
-
-        aiStatus = SmAiStatus.Analyzing
-        try {
-            engine.initialize()
-            val service = IngestService(engine::generate)
-            var progress = ChapterProgress()
-            MockData.chapters.forEach { chapter ->
-                val result = service.ingest(
-                    chapterLabel = chapter.label,
-                    title = chapter.title ?: chapter.label,
-                    paragraphs = chapter.paragraphs,
-                    existingWiki = progress.wikiEntries,
-                )
-                progress = progress.merge(result)
-            }
-            graphNodes = progress.nodes
-            graphEdges = progress.edges
-            wikiEntries = progress.wikiEntries
-            orphanIds = progress.orphanIds
-            aiStatus = SmAiStatus.Done
-        } catch (e: Exception) {
-            Log.w(TAG, "On-device ingest failed, keeping MockData preview", e)
-            aiStatus = SmAiStatus.Idle
-        } finally {
-            engine.release()
-        }
-    }
 
     LaunchedEffect(tab) {
         if (tab != SmTab.Editor) {
@@ -109,25 +55,33 @@ fun StoryMindApp(modifier: Modifier = Modifier) {
         Box(modifier = Modifier.fillMaxSize().weight(1f, fill = true)) {
             when (tab) {
                 SmTab.Editor -> EditorScreen(
-                    aiStatus = aiStatus,
+                    aiStatus = uiState.aiStatus,
                     shakeTrigger = shakeTrigger,
-                    isEmpty = false,
+                    canAdvance = uiState.canAdvance,
+                    previousChapters = uiState.previousChapters.map {
+                        EditorChapterSnapshot(label = it.label, title = it.title, body = it.body)
+                    },
+                    currentLabel = uiState.currentLabel,
+                    currentBody = uiState.currentBody,
+                    onBodyChange = viewModel::onBodyChange,
+                    onSave = viewModel::saveAndIngest,
+                    onNextChapter = viewModel::startNextChapter,
                     onWikiOpen = { drawerOpen = true },
                 )
                 SmTab.Brain -> BrainScreen(
-                    nodes = graphNodes,
-                    edges = graphEdges,
-                    orphanIds = orphanIds,
-                    wikiEntries = wikiEntries,
+                    nodes = uiState.graphNodes,
+                    edges = uiState.graphEdges,
+                    orphanIds = uiState.orphanIds,
+                    wikiEntries = uiState.wikiEntries,
                 )
-                SmTab.Wiki -> WikiScreen(entries = wikiEntries)
+                SmTab.Wiki -> WikiScreen(entries = uiState.wikiEntries)
                 SmTab.Settings -> SettingsScreen()
             }
 
             SmWikiDrawer(
                 isOpen = drawerOpen,
                 onClose = { drawerOpen = false },
-                entries = wikiEntries,
+                entries = uiState.wikiEntries,
             )
 
             SmBottomSheet(

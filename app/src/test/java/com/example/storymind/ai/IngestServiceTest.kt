@@ -92,6 +92,83 @@ class IngestServiceTest {
     }
 
     @Test
+    fun `ingest retries generation when the model's JSON fails to parse, then uses the recovered result`() = runBlocking {
+        var callCount = 0
+        val service = IngestService(engine = {
+            callCount++
+            if (callCount < 3) "이건 JSON이 아니라 그냥 잡음입니다" else fakeRaw
+        })
+
+        val result = service.ingest(chapterLabel = "1장", title = "빗소리", paragraphs = listOf("..."))
+
+        assertEquals(3, callCount)
+        assertEquals(4, result.wikiEntries.size)
+        assertEquals("지우와 민준이 카페에서 처음 만났다.", result.chapterSummary)
+    }
+
+    @Test
+    fun `ingest gives up and falls back to an empty result after exhausting all retries`() = runBlocking {
+        var callCount = 0
+        val service = IngestService(engine = {
+            callCount++
+            "이건 JSON이 아니라 그냥 잡음입니다"
+        })
+
+        val result = service.ingest(chapterLabel = "1장", title = "빗소리", paragraphs = listOf("..."))
+
+        assertEquals(3, callCount)
+        assertTrue(result.wikiEntries.isEmpty())
+        assertEquals("", result.chapterSummary)
+    }
+
+    @Test
+    fun `ingest reuses an existing wiki entry's id when the model uses a surname-dropped nickname`() = runBlocking {
+        val rawWithNickname = """
+            {
+              "chapter_summary": "지민이 다시 등장한다.",
+              "entities": [
+                {"id":"jimin_2","type":"character","name":"지민","desc":"짧게 불린 이름"}
+              ],
+              "relations": []
+            }
+        """.trimIndent()
+        val service = IngestService(engine = { rawWithNickname })
+        val existingWiki = listOf(
+            WikiEntry("jimin", SmBadgeType.Character, "이지민", "1장 설명", "1장"),
+        )
+
+        val result = service.ingest(
+            chapterLabel = "2장",
+            title = "2장",
+            paragraphs = listOf("..."),
+            existingWiki = existingWiki,
+        )
+
+        assertEquals(setOf("jimin"), result.wikiEntries.map { it.id }.toSet())
+    }
+
+    @Test
+    fun `ingest collapses the same entity listed twice in one response into a single wiki entry`() = runBlocking {
+        val rawWithDuplicateEntity = """
+            {
+              "chapter_summary": "지민이 두 번 언급된다.",
+              "entities": [
+                {"id":"jimin","type":"character","name":"지민","desc":"첫 번째 언급"},
+                {"id":"jimin","type":"character","name":"지민","desc":"두 번째 언급"}
+              ],
+              "relations": []
+            }
+        """.trimIndent()
+        val service = IngestService(engine = { rawWithDuplicateEntity })
+
+        val result = service.ingest(chapterLabel = "1장", title = "1장", paragraphs = listOf("..."))
+
+        assertEquals(1, result.wikiEntries.size)
+        assertEquals("두 번째 언급", result.wikiEntries[0].desc)
+        assertEquals(1, result.nodes.size)
+    }
+
+    @Test
     fun `ingest drops relations that reference an entity skipped for unknown type`() = runBlocking {
         val rawWithBadRelation = """
             {
