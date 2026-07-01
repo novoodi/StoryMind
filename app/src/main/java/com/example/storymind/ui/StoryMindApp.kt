@@ -1,5 +1,6 @@
 package com.example.storymind.ui
 
+import android.util.Log
 import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.Column
 import androidx.compose.foundation.layout.fillMaxSize
@@ -13,6 +14,11 @@ import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.remember
 import androidx.compose.runtime.setValue
 import androidx.compose.ui.Modifier
+import androidx.compose.ui.platform.LocalContext
+import androidx.compose.ui.platform.LocalInspectionMode
+import com.example.storymind.ai.IngestService
+import com.example.storymind.ai.OnDeviceEngine
+import com.example.storymind.ai.layoutNodes
 import com.example.storymind.data.MockData
 import com.example.storymind.ui.components.SmAiStatus
 import com.example.storymind.ui.components.SmBottomSheet
@@ -25,10 +31,16 @@ import com.example.storymind.ui.screens.EditorScreen
 import com.example.storymind.ui.screens.SettingsScreen
 import com.example.storymind.ui.screens.WikiScreen
 
+private const val TAG = "StoryMindApp"
+private const val CHAPTER_LABEL = "1장"
+
 /**
  * App root — mirrors the prototype's App component: tab switching, the
- * editor's AI status/conflict-warning timeline, the wiki drawer, and the
- * warning bottom sheet.
+ * editor's AI status, the wiki drawer, and the warning bottom sheet.
+ *
+ * On first composition (skipped in Compose previews), runs a single on-device
+ * ingest pass over the fixed manuscript (MockData.chapterParagraphs) and swaps
+ * the MockData preview content for the real result once it lands.
  */
 @Composable
 fun StoryMindApp(modifier: Modifier = Modifier) {
@@ -38,16 +50,49 @@ fun StoryMindApp(modifier: Modifier = Modifier) {
     var shakeTrigger by remember { mutableIntStateOf(0) }
     var aiStatus by remember { mutableStateOf(SmAiStatus.Analyzing) }
 
+    var wikiEntries by remember { mutableStateOf(MockData.wiki) }
+    var graphNodes by remember { mutableStateOf(MockData.nodes) }
+    var graphEdges by remember { mutableStateOf(MockData.edges) }
+    var orphanIds by remember {
+        val connected = MockData.edges.flatMap { listOf(it.from, it.to) }.toSet()
+        mutableStateOf(MockData.nodes.map { it.id }.toSet() - connected)
+    }
+
+    val context = LocalContext.current
+    val inPreview = LocalInspectionMode.current
+
+    LaunchedEffect(Unit) {
+        if (inPreview) return@LaunchedEffect
+
+        val engine = OnDeviceEngine(context)
+        if (!engine.isModelAvailable) {
+            aiStatus = SmAiStatus.Idle
+            return@LaunchedEffect
+        }
+
+        aiStatus = SmAiStatus.Analyzing
+        try {
+            engine.initialize()
+            val result = IngestService(engine::generate).ingest(
+                chapterLabel = CHAPTER_LABEL,
+                title = MockData.chapterTitle,
+                paragraphs = MockData.chapterParagraphs,
+            )
+            graphNodes = layoutNodes(result.nodes)
+            graphEdges = result.edges
+            wikiEntries = result.wikiEntries
+            orphanIds = result.orphanIds
+            aiStatus = SmAiStatus.Done
+        } catch (e: Exception) {
+            Log.w(TAG, "On-device ingest failed, keeping MockData preview", e)
+            aiStatus = SmAiStatus.Idle
+        } finally {
+            engine.release()
+        }
+    }
+
     LaunchedEffect(tab) {
-        if (tab == SmTab.Editor) {
-            aiStatus = SmAiStatus.Analyzing
-            kotlinx.coroutines.delay(3000)
-            aiStatus = SmAiStatus.Warning
-            kotlinx.coroutines.delay(500)
-            shakeTrigger++
-            warningOpen = true
-        } else {
-            aiStatus = SmAiStatus.Analyzing
+        if (tab != SmTab.Editor) {
             warningOpen = false
             drawerOpen = false
         }
@@ -62,15 +107,20 @@ fun StoryMindApp(modifier: Modifier = Modifier) {
                     isEmpty = false,
                     onWikiOpen = { drawerOpen = true },
                 )
-                SmTab.Brain -> BrainScreen()
-                SmTab.Wiki -> WikiScreen()
+                SmTab.Brain -> BrainScreen(
+                    nodes = graphNodes,
+                    edges = graphEdges,
+                    orphanIds = orphanIds,
+                    wikiEntries = wikiEntries,
+                )
+                SmTab.Wiki -> WikiScreen(entries = wikiEntries)
                 SmTab.Settings -> SettingsScreen()
             }
 
             SmWikiDrawer(
                 isOpen = drawerOpen,
                 onClose = { drawerOpen = false },
-                entries = MockData.wiki,
+                entries = wikiEntries,
             )
 
             SmBottomSheet(

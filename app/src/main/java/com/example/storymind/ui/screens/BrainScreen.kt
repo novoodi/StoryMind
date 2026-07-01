@@ -51,7 +51,9 @@ import androidx.compose.ui.input.pointer.pointerInput
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
-import com.example.storymind.data.MockData
+import com.example.storymind.data.GraphEdge
+import com.example.storymind.data.GraphNode
+import com.example.storymind.data.WikiEntry
 import com.example.storymind.ui.components.SmBadge
 import com.example.storymind.ui.components.SmBadgeType
 import com.example.storymind.ui.components.SmIconButton
@@ -72,12 +74,18 @@ private fun nodeVisual(type: SmBadgeType) = when (type) {
 
 /** The Second Brain relationship graph — mirrors the prototype's BrainScreen. */
 @Composable
-fun BrainScreen(modifier: Modifier = Modifier) {
+fun BrainScreen(
+    nodes: List<GraphNode>,
+    edges: List<GraphEdge>,
+    orphanIds: Set<String>,
+    wikiEntries: List<WikiEntry>,
+    modifier: Modifier = Modifier,
+) {
     var filter by remember { mutableStateOf("전체") }
     var selected by remember { mutableStateOf<String?>(null) }
-    val positions = remember {
+    val positions = remember(nodes) {
         mutableStateMapOf<String, Offset>().apply {
-            MockData.nodes.forEach { put(it.id, Offset(it.x, it.y)) }
+            nodes.forEach { put(it.id, Offset(it.x, it.y)) }
         }
     }
 
@@ -119,6 +127,10 @@ fun BrainScreen(modifier: Modifier = Modifier) {
 
         Box(modifier = Modifier.weight(1f, fill = true)) {
             GraphCanvas(
+                nodes = nodes,
+                edges = edges,
+                orphanIds = orphanIds,
+                wikiEntries = wikiEntries,
                 positions = positions,
                 selected = selected,
                 onSelect = { selected = it },
@@ -129,6 +141,10 @@ fun BrainScreen(modifier: Modifier = Modifier) {
 
 @Composable
 private fun GraphCanvas(
+    nodes: List<GraphNode>,
+    edges: List<GraphEdge>,
+    orphanIds: Set<String>,
+    wikiEntries: List<WikiEntry>,
     positions: androidx.compose.runtime.snapshots.SnapshotStateMap<String, Offset>,
     selected: String?,
     onSelect: (String?) -> Unit,
@@ -138,7 +154,7 @@ private fun GraphCanvas(
     val connectedSet: Set<String>? = focusId?.let { id ->
         buildSet {
             add(id)
-            MockData.edges.forEach { (a, b) ->
+            edges.forEach { (a, b) ->
                 if (a == id) add(b)
                 if (b == id) add(a)
             }
@@ -157,7 +173,7 @@ private fun GraphCanvas(
         val heightPx = maxHeight.value * density.density
 
         androidx.compose.foundation.Canvas(modifier = Modifier.fillMaxSize()) {
-            MockData.edges.forEach { (a, b) ->
+            edges.forEach { (a, b) ->
                 val na = positions[a] ?: return@forEach
                 val nb = positions[b] ?: return@forEach
                 val hilit = focusId == null || a == focusId || b == focusId
@@ -171,7 +187,7 @@ private fun GraphCanvas(
             }
         }
 
-        MockData.nodes.forEach { node ->
+        nodes.forEach { node ->
             val pos = positions[node.id] ?: Offset(node.x, node.y)
             val isSel = selected == node.id
             val isPressed = pressed == node.id
@@ -217,7 +233,7 @@ private fun GraphCanvas(
                     },
                 horizontalAlignment = Alignment.CenterHorizontally,
             ) {
-                val breathe = if (node.type == SmBadgeType.Orphan) {
+                val breathe = if (node.id in orphanIds) {
                     val transition = rememberInfiniteTransition(label = "orphanBreathe")
                     val a by transition.animateFloat(
                         initialValue = 1f, targetValue = 0.4f,
@@ -248,7 +264,7 @@ private fun GraphCanvas(
                 Spacer(Modifier.height(4.dp))
                 Text(
                     text = node.label,
-                    color = if (node.type == SmBadgeType.Orphan) SmColors.nodeOrphan
+                    color = if (node.id in orphanIds) SmColors.nodeOrphan
                     else if (isSel) visual.fill else SmColors.textPrimary,
                     fontFamily = Pretendard,
                     fontWeight = if (isSel) FontWeight.Bold else FontWeight.SemiBold,
@@ -257,7 +273,7 @@ private fun GraphCanvas(
             }
         }
 
-        val tooltipEntry = focusId?.let { MockData.wikiFor(it) }
+        val tooltipEntry = focusId?.let { id -> wikiEntries.find { it.id == id } }
         AnimatedVisibility(
             visible = focusId != null,
             enter = fadeIn(tween(150)) + slideInVertically(tween(150)) { it / 4 },
@@ -267,7 +283,7 @@ private fun GraphCanvas(
                 .padding(start = 14.dp, end = 14.dp, bottom = 60.dp)
                 .fillMaxWidth(),
         ) {
-            val entryName = tooltipEntry?.name ?: MockData.nodes.find { it.id == focusId }?.label ?: ""
+            val entryName = tooltipEntry?.name ?: nodes.find { it.id == focusId }?.label ?: ""
             val entryDesc = tooltipEntry?.desc ?: "아직 연결되지 않은 이야기예요."
             val entryChapter = tooltipEntry?.chapter ?: "—"
             val entryType = tooltipEntry?.type ?: SmBadgeType.Orphan
@@ -312,36 +328,39 @@ private fun GraphCanvas(
         }
 
         // Orphan warning banner
-        Box(
-            modifier = Modifier
-                .align(Alignment.BottomCenter)
-                .padding(horizontal = 12.dp, vertical = 12.dp)
-                .fillMaxWidth()
-                .clip(RoundedCornerShape(12.dp))
-                .background(SmColors.nodeOrphanBg)
-                .padding(horizontal = 13.dp, vertical = 9.dp),
-        ) {
-            Row(verticalAlignment = Alignment.CenterVertically) {
-                val transition = rememberInfiniteTransition(label = "banner")
-                val a by transition.animateFloat(
-                    initialValue = 1f, targetValue = 0.4f,
-                    animationSpec = infiniteRepeatable(tween(2600), RepeatMode.Reverse),
-                    label = "bannerAlpha",
-                )
-                Box(
-                    modifier = Modifier
-                        .size(6.dp)
-                        .alpha(a)
-                        .clip(CircleShape)
-                        .background(SmColors.nodeOrphan)
-                )
-                Spacer(Modifier.width(8.dp))
-                Text(
-                    text = "아직 연결되지 않은 이야기예요 — 수상한 남자",
-                    color = SmColors.nodeOrphan,
-                    fontFamily = Pretendard,
-                    fontSize = 12.sp,
-                )
+        val orphanLabels = nodes.filter { it.id in orphanIds }.map { it.label }
+        if (orphanLabels.isNotEmpty()) {
+            Box(
+                modifier = Modifier
+                    .align(Alignment.BottomCenter)
+                    .padding(horizontal = 12.dp, vertical = 12.dp)
+                    .fillMaxWidth()
+                    .clip(RoundedCornerShape(12.dp))
+                    .background(SmColors.nodeOrphanBg)
+                    .padding(horizontal = 13.dp, vertical = 9.dp),
+            ) {
+                Row(verticalAlignment = Alignment.CenterVertically) {
+                    val transition = rememberInfiniteTransition(label = "banner")
+                    val a by transition.animateFloat(
+                        initialValue = 1f, targetValue = 0.4f,
+                        animationSpec = infiniteRepeatable(tween(2600), RepeatMode.Reverse),
+                        label = "bannerAlpha",
+                    )
+                    Box(
+                        modifier = Modifier
+                            .size(6.dp)
+                            .alpha(a)
+                            .clip(CircleShape)
+                            .background(SmColors.nodeOrphan)
+                    )
+                    Spacer(Modifier.width(8.dp))
+                    Text(
+                        text = "아직 연결되지 않은 이야기예요 — ${orphanLabels.joinToString(", ")}",
+                        color = SmColors.nodeOrphan,
+                        fontFamily = Pretendard,
+                        fontSize = 12.sp,
+                    )
+                }
             }
         }
     }

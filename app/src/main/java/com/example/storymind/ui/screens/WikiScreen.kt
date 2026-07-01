@@ -10,7 +10,7 @@ import androidx.compose.foundation.lazy.items
 import androidx.compose.runtime.Composable
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.unit.dp
-import com.example.storymind.data.MockData
+import com.example.storymind.data.WikiEntry
 import com.example.storymind.ui.components.SmBadge
 import com.example.storymind.ui.components.SmCard
 import com.example.storymind.ui.components.SmIconButton
@@ -20,7 +20,7 @@ import com.example.storymind.ui.theme.SmColors
 
 /** Auto-generated setting-bible list — mirrors the prototype's WikiScreen. */
 @Composable
-fun WikiScreen(modifier: Modifier = Modifier) {
+fun WikiScreen(entries: List<WikiEntry>, modifier: Modifier = Modifier) {
     Column(modifier = modifier.fillMaxSize().background(SmColors.surfaceBase)) {
         SmToolbar(
             title = "위키",
@@ -31,7 +31,7 @@ fun WikiScreen(modifier: Modifier = Modifier) {
             contentPadding = PaddingValues(horizontal = 15.dp, vertical = 12.dp),
             verticalArrangement = Arrangement.spacedBy(10.dp),
         ) {
-            items(MockData.wiki) { entry ->
+            items(entries) { entry ->
                 SmCard(
                     title = entry.name,
                     badge = { SmBadge(type = entry.type) },

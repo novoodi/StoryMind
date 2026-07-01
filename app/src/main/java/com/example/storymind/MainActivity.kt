@@ -15,7 +15,8 @@ class MainActivity : ComponentActivity() {
         enableEdgeToEdge()
         setContent {
             StoryMindTheme {
-                StoryMindApp(modifier = Modifier.fillMaxSize())
+                StoryMindApp(modifier =
+                    Modifier.fillMaxSize())
             }
         }
     }
