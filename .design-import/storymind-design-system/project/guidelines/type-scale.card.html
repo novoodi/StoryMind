@@ -1,0 +1,25 @@
+<!-- @dsCard group="Type" viewport="700x230" name="Type Scale" subtitle="xs 11px → 5xl 38px · Pretendard, letter-spacing -0.01em" -->
+<!DOCTYPE html>
+<html lang="ko">
+<head>
+<meta charset="UTF-8">
+<link rel="stylesheet" href="../styles.css">
+<style>
+  body { margin:0; padding:16px 24px; background:#fff; height:230px; box-sizing:border-box; overflow:hidden; font-family:var(--font-sans,sans-serif); }
+  .row { display:flex; align-items:baseline; gap:16px; padding:3.5px 0; border-bottom:1px solid var(--neutral-100,#F2F4F9); }
+  .row:last-child { border-bottom:none; }
+  .token { font-size:10px; font-weight:600; color:var(--neutral-300,#C8CBDA); font-family:monospace; width:80px; flex-shrink:0; }
+  .px { font-size:10px; color:var(--neutral-300,#C8CBDA); font-family:monospace; width:40px; flex-shrink:0; }
+  .sample { color:var(--text-primary,#1A1B1E); letter-spacing:var(--tracking-normal,-.01em); white-space:nowrap; overflow:hidden; }
+</style>
+</head>
+<body>
+<div class="row"><span class="token">--text-xs</span><span class="px">11px</span><span class="sample" style="font-size:11px">가나다라마바 · AaBbCc — 캡션</span></div>
+<div class="row"><span class="token">--text-sm</span><span class="px">12px</span><span class="sample" style="font-size:12px">가나다라마바 · AaBbCc — AI 상태</span></div>
+<div class="row"><span class="token">--text-base</span><span class="px">14px</span><span class="sample" style="font-size:14px;font-weight:500">가나다라마바 · AaBbCc — UI 레이블</span></div>
+<div class="row"><span class="token">--text-md</span><span class="px">16px</span><span class="sample" style="font-size:16px">가나다라마바 · AaBbCc — 본문 최소</span></div>
+<div class="row"><span class="token">--text-lg</span><span class="px">18px</span><span class="sample" style="font-size:18px">가나다라마 · 에디터 본문</span></div>
+<div class="row"><span class="token">--text-2xl</span><span class="px">24px</span><span class="sample" style="font-size:24px;font-weight:600">가나다라 · 섹션 제목</span></div>
+<div class="row"><span class="token">--text-4xl</span><span class="px">32px</span><span class="sample" style="font-size:32px;font-weight:700;letter-spacing:-.03em">가나다 · H1 최소</span></div>
+</body>
+</html>

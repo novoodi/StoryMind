@@ -1,0 +1,24 @@
+<!-- @dsCard group="Spacing" viewport="700x200" name="Layout Tokens" subtitle="Screen padding · toolbar · nav · button heights — all spec-mandated" -->
+<!DOCTYPE html>
+<html lang="ko">
+<head>
+<meta charset="UTF-8">
+<link rel="stylesheet" href="../styles.css">
+<style>
+  body { margin:0; padding:18px 24px; background:#fff; height:200px; box-sizing:border-box; overflow:hidden; font-family:var(--font-sans,sans-serif); display:flex; flex-direction:column; gap:6px; }
+  .row { display:flex; align-items:center; gap:12px; }
+  .bar { background:var(--blue-50,#EBF0FF); border-radius:5px; display:flex; align-items:center; padding:0 8px; }
+  .bar-fill { background:var(--color-brand,#1F4EF5); border-radius:3px; opacity:.7; }
+  .name { font-size:11px; font-weight:600; color:var(--text-secondary,#5C5F6B); width:160px; flex-shrink:0; letter-spacing:-.01em; }
+  .val { font-size:10px; color:var(--neutral-400,#9EA3B3); font-family:monospace; }
+</style>
+</head>
+<body>
+  <div class="row"><span class="name">대시보드 화면 패딩</span><div class="bar" style="width:15px;height:22px"><div class="bar-fill" style="width:15px;height:14px"></div></div><span class="val">--layout-padding-screen · 15px</span></div>
+  <div class="row"><span class="name">에디터 화면 패딩</span><div class="bar" style="width:22px;height:22px"><div class="bar-fill" style="width:22px;height:14px"></div></div><span class="val">--layout-padding-focused · 22px</span></div>
+  <div class="row"><span class="name">상단 툴바 높이</span><div class="bar" style="width:120px;height:22px"><div class="bar-fill" style="width:120px;height:14px"></div></div><span class="val">--layout-toolbar · 42px</span></div>
+  <div class="row"><span class="name">하단 네비게이션</span><div class="bar" style="width:120px;height:22px"><div class="bar-fill" style="width:120px;height:14px;opacity:.5"></div></div><span class="val">--layout-nav · 50px (아이콘 22×22)</span></div>
+  <div class="row"><span class="name">주요 버튼 (CTA)</span><div class="bar" style="width:120px;height:30px"><div class="bar-fill" style="width:120px;height:22px;background:var(--color-brand)"></div></div><span class="val">--button-lg · 53px</span></div>
+  <div class="row"><span class="name">최소 터치 타겟</span><div class="bar" style="width:120px;height:25px"><div class="bar-fill" style="width:120px;height:17px;opacity:.4"></div></div><span class="val">--touch-min · 44px</span></div>
+</body>
+</html>

@@ -1,0 +1,24 @@
+<!-- @dsCard group="Colors" viewport="700x190" name="Text Colors" subtitle="Semantic text tokens — primary, secondary, tertiary, disabled" -->
+<!DOCTYPE html>
+<html lang="ko">
+<head>
+<meta charset="UTF-8">
+<link rel="stylesheet" href="../styles.css">
+<style>
+  body { margin:0; padding:20px 24px; background:#fff; height:190px; box-sizing:border-box; overflow:hidden; font-family:var(--font-sans,sans-serif); }
+  .row { display:flex; align-items:center; gap:14px; padding:7px 0; border-bottom:1px solid var(--neutral-100,#F2F4F9); }
+  .row:last-child { border-bottom:none; }
+  .dot { width:12px; height:12px; border-radius:50%; flex-shrink:0; }
+  .name { font-size:11px; font-weight:600; color:var(--neutral-400,#9EA3B3); letter-spacing:-.01em; width:120px; flex-shrink:0; }
+  .sample { font-size:14px; letter-spacing:-.01em; flex:1; }
+  .hex { font-size:10px; color:var(--neutral-300,#C8CBDA); font-family:monospace; }
+</style>
+</head>
+<body>
+<div class="row"><div class="dot" style="background:var(--text-primary)"></div><div class="name">--text-primary</div><div class="sample" style="color:var(--text-primary)">가나다라 · 소설 집필을 시작해요</div><div class="hex">#1A1B1E</div></div>
+<div class="row"><div class="dot" style="background:var(--text-secondary)"></div><div class="name">--text-secondary</div><div class="sample" style="color:var(--text-secondary)">가나다라 · 챕터 설명이 여기 들어가요</div><div class="hex">#5C5F6B</div></div>
+<div class="row"><div class="dot" style="background:var(--text-tertiary)"></div><div class="name">--text-tertiary</div><div class="sample" style="color:var(--text-tertiary)">가나다라 · AI가 분석하고 있어요</div><div class="hex">#9EA3B3</div></div>
+<div class="row"><div class="dot" style="background:var(--text-disabled)"></div><div class="name">--text-disabled</div><div class="sample" style="color:var(--text-disabled)">가나다라 · 비활성 상태예요</div><div class="hex">#C8CBDA</div></div>
+<div class="row"><div class="dot" style="background:var(--color-brand)"></div><div class="name">--text-on-brand</div><div class="sample" style="background:var(--color-brand);color:#fff;padding:2px 8px;border-radius:4px;display:inline-block;font-size:13px">버튼 위 흰 글씨</div><div class="hex">#FFFFFF</div></div>
+</body>
+</html>

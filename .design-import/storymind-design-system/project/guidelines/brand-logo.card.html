@@ -1,0 +1,44 @@
+<!-- @dsCard group="Brand" viewport="700x160" name="Logo & Wordmark" subtitle="App icon · wordmark · usage on light and dark" -->
+<!DOCTYPE html>
+<html lang="ko">
+<head>
+<meta charset="UTF-8">
+<link rel="stylesheet" href="../styles.css">
+<style>
+  body { margin:0; height:160px; box-sizing:border-box; overflow:hidden; font-family:var(--font-sans,sans-serif); display:flex; }
+  .pane { flex:1; display:flex; align-items:center; justify-content:center; gap:20px; padding:24px; }
+  .light { background:#fff; }
+  .dark { background:var(--neutral-950,#1A1B1E); }
+  .divider { width:1px; background:var(--neutral-100,#F2F4F9); flex-shrink:0; }
+  .logo-wrap { display:flex; align-items:center; gap:14px; }
+  img { display:block; }
+  .text { display:flex; flex-direction:column; gap:2px; }
+  .brand { font-size:20px; font-weight:700; letter-spacing:-.03em; color:var(--text-primary,#1A1B1E); }
+  .brand-dark { color:#fff; }
+  .sub { font-size:11px; color:var(--text-tertiary,#9EA3B3); letter-spacing:-.01em; }
+  .sub-dark { color:rgba(255,255,255,0.45); }
+  .mark { width:44px; height:44px; }
+</style>
+</head>
+<body>
+  <div class="pane light">
+    <div class="logo-wrap">
+      <img src="../assets/logo.svg" class="mark" alt="Logo mark">
+      <div class="text">
+        <div class="brand">StoryMind</div>
+        <div class="sub">소설 집필 어시스턴트</div>
+      </div>
+    </div>
+  </div>
+  <div class="divider"></div>
+  <div class="pane dark">
+    <div class="logo-wrap">
+      <img src="../assets/logo.svg" class="mark" alt="Logo mark">
+      <div class="text">
+        <div class="brand brand-dark">StoryMind</div>
+        <div class="sub sub-dark">소설 집필 어시스턴트</div>
+      </div>
+    </div>
+  </div>
+</body>
+</html>

@@ -1,0 +1,708 @@
+<!-- @dsCard group="Novel App" viewport="390x844" name="스토리마인드" subtitle="AI 소설 집필 어시스턴트 · 에디터 · 세컨드 브레인 · 위키 · 인터랙티브 프로토타입" -->
+<!DOCTYPE html>
+<html lang="ko">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=390,initial-scale=1">
+<title>StoryMind · AI 소설 집필 어시스턴트</title>
+<link rel="stylesheet" href="../../styles.css">
+<script src="https://unpkg.com/react@18.3.1/umd/react.development.js" integrity="sha384-hD6/rw4ppMLGNu3tX5cjIb+uRZ7UkRJ6BPkLpg4hAu/6onKUg4lLsHAs9EBPT82L" crossorigin="anonymous"></script>
+<script src="https://unpkg.com/react-dom@18.3.1/umd/react-dom.development.js" integrity="sha384-u6aeetuaXnQ38mYT8rp6sbXaQe3NL9t+IBXmnYxwkUI2Hw4bsp2Wvmx4yRQF1uAm" crossorigin="anonymous"></script>
+<script src="https://unpkg.com/@babel/standalone@7.29.0/babel.min.js" integrity="sha384-m08KidiNqLdpJqLq95G/LEi8Qvjl/xUYll3QILypMoQ65QorJ9Lvtp2RXYGBFj1y" crossorigin="anonymous"></script>
+<script type="text/babel" src="tweaks-panel.jsx"></script>
+<style>
+*,*::before,*::after{box-sizing:border-box;margin:0;padding:0}
+html,body{width:100%;height:100%;-webkit-font-smoothing:antialiased}
+::-webkit-scrollbar{width:0}
+@keyframes sm-pulse{0%,100%{opacity:1}50%{opacity:.35}}
+@keyframes sm-shake{0%,100%{transform:translateX(0)}20%{transform:translateX(-5px)}40%{transform:translateX(5px)}60%{transform:translateX(-3px)}80%{transform:translateX(3px)}}
+@keyframes sm-orphan-breathe{0%,100%{opacity:1}50%{opacity:.4}}
+</style>
+</head>
+<body>
+<div id="root"></div>
+<script type="text/babel">
+const { useState, useEffect, useRef, createContext, useContext } = React;
+
+/* ────────────────────────────────────────────────────
+   Theme system
+   ──────────────────────────────────────────────────── */
+const ThemeCtx = createContext(null);
+const useT = () => useContext(ThemeCtx);
+
+const hex2rgba = (hex, a) => {
+  const n = parseInt(hex.replace('#',''), 16);
+  return `rgba(${n>>16&255},${n>>8&255},${n&255},${a})`;
+};
+
+const ATMOSPHERES = {
+  '낮':   {
+    bg:'#FFFFFF',   bgSubtle:'#F8F9FC',
+    text:'#1A1B1E', textSec:'#5C5F6B', textTert:'#9EA3B3',
+    border:'#E5E7EF',
+    redBg:'#FFF0F0', greenBg:'#F0FFF4', amberBg:'#FFFBEB', purpleBg:'#F5F3FF',
+    deviceBg:'#111214', edgeLine:'#C8CBDA',
+  },
+  '황혼': {
+    bg:'#FDF6EE',   bgSubtle:'#F5EBD8',
+    text:'#2A1F12', textSec:'#7A6048', textTert:'#A8906E',
+    border:'#E8D5BC',
+    redBg:'#FFF0E8', greenBg:'#EDFAF0', amberBg:'#FFF8EE', purpleBg:'#F7F0FF',
+    deviceBg:'#1A0F05', edgeLine:'#D6BFA3',
+  },
+  '밤':  {
+    bg:'#131416',   bgSubtle:'#1C1D21',
+    text:'#E8E9EE', textSec:'#8C8FA0', textTert:'#5A5E72',
+    border:'#2E3038',
+    redBg:'#2A1515', greenBg:'#0F2016', amberBg:'#231A08', purpleBg:'#1A1228',
+    deviceBg:'#000000', edgeLine:'#3A3D4A',
+  },
+};
+
+const RHYTHMS = {
+  '넓게':   { fontSize:20, lineHeight:2.0,  pad:28, h1:34, gap:24 },
+  '보통':   { fontSize:18, lineHeight:1.8,  pad:22, h1:30, gap:18 },
+  '빽빽히': { fontSize:15, lineHeight:1.55, pad:14, h1:24, gap:12 },
+};
+
+const makeTheme = (accent, atmKey, rhy) => {
+  const atm = ATMOSPHERES[atmKey] || ATMOSPHERES['낮'];
+  const isDark = atmKey === '밤';
+  return {
+    brand: accent,
+    brandSubtle: hex2rgba(accent, isDark ? 0.18 : 0.10),
+    red:'#EF4444', green:'#16A34A', amber:'#D97706', purple:'#7C3AED',
+    font:"'Pretendard',-apple-system,'Apple SD Gothic Neo',sans-serif",
+    rhythm: RHYTHMS[rhy] || RHYTHMS['보통'],
+    ...atm,
+  };
+};
+
+const TWEAK_DEFAULTS = /*EDITMODE-BEGIN*/{
+  "atmosphere": "밤",
+  "rhythm": "보통",
+  "accent": "#1F4EF5",
+  "emptyState": false
+}/*EDITMODE-END*/;
+
+/* ── Data ── */
+const NODES = [
+  {id:'jiwoo',   type:'character', label:'김지우',     x:25,y:20},
+  {id:'minjoon', type:'character', label:'박민준',     x:68,y:37},
+  {id:'home',    type:'place',     label:'집',         x:14,y:63},
+  {id:'cafe',    type:'place',     label:'카페 달빛',  x:52,y:74},
+  {id:'letter',  type:'item',      label:'손편지',     x:80,y:18},
+  {id:'meeting', type:'event',     label:'첫 만남',    x:44,y:49},
+  {id:'stranger',type:'orphan',    label:'수상한 남자',x:82,y:81},
+];
+const EDGES=[['jiwoo','minjoon'],['jiwoo','home'],['jiwoo','cafe'],['minjoon','cafe'],['jiwoo','letter'],['minjoon','letter'],['meeting','jiwoo'],['meeting','minjoon'],['meeting','cafe']];
+const WIKI=[
+  {id:'jiwoo',   type:'character',name:'김지우',    desc:'26세 · 작가 지망생 · 빗소리를 좋아함',chapter:'1장'},
+  {id:'minjoon', type:'character',name:'박민준',    desc:'28세 · 카페 달빛 단골손님',chapter:'1장'},
+  {id:'cafe',    type:'place',    name:'카페 달빛', desc:'두 주인공이 처음 만난 장소',chapter:'1장'},
+  {id:'home',    type:'place',    name:'집',        desc:'김지우의 아파트 · 강북구',chapter:'2장'},
+  {id:'letter',  type:'item',     name:'손편지',    desc:'박민준이 김지우에게 남긴 편지',chapter:'3장'},
+  {id:'meeting', type:'event',    name:'첫 만남',   desc:'비 오는 날 카페에서의 우연한 만남',chapter:'1장'},
+];
+
+/* ── Icon helpers ── */
+const ic = (d, w=20) => (
+  <svg width={w} height={w} viewBox="0 0 24 24" fill="none" stroke="currentColor"
+       strokeWidth="1.8" strokeLinecap="round" strokeLinejoin="round"
+       dangerouslySetInnerHTML={{__html:d}}/>
+);
+const IcEdit   = () => ic('<path d="M11 4H4a2 2 0 0 0-2 2v14a2 2 0 0 0 2 2h14a2 2 0 0 0 2-2v-7"/><path d="M18.5 2.5a2.121 2.121 0 0 1 3 3L12 15l-4 1 1-4 9.5-9.5z"/>');
+const IcBrain  = () => ic('<circle cx="12" cy="12" r="3"/><line x1="12" y1="2" x2="12" y2="9"/><line x1="12" y1="15" x2="12" y2="22"/><line x1="4.22" y1="4.22" x2="9.17" y2="9.17"/><line x1="14.83" y1="14.83" x2="19.78" y2="19.78"/><line x1="2" y1="12" x2="9" y2="12"/><line x1="15" y1="12" x2="22" y2="12"/><line x1="4.22" y1="19.78" x2="9.17" y2="14.83"/><line x1="14.83" y1="9.17" x2="19.78" y2="4.22"/>');
+const IcBook   = () => ic('<path d="M4 19.5A2.5 2.5 0 0 1 6.5 17H20"/><path d="M6.5 2H20v20H6.5A2.5 2.5 0 0 1 4 19.5v-15A2.5 2.5 0 0 1 6.5 2z"/>');
+const IcGear   = () => ic('<circle cx="12" cy="12" r="3"/><path d="M19.4 15a1.65 1.65 0 0 0 .33 1.82l.06.06a2 2 0 0 1-2.83 2.83l-.06-.06a1.65 1.65 0 0 0-1.82-.33 1.65 1.65 0 0 0-1 1.51V21a2 2 0 0 1-4 0v-.09A1.65 1.65 0 0 0 9 19.4a1.65 1.65 0 0 0-1.82.33l-.06.06a2 2 0 0 1-2.83-2.83l.06-.06A1.65 1.65 0 0 0 4.68 15a1.65 1.65 0 0 0-1.51-1H3a2 2 0 0 1 0-4h.09A1.65 1.65 0 0 0 4.6 9a1.65 1.65 0 0 0-.33-1.82l-.06-.06a2 2 0 0 1 2.83-2.83l.06.06A1.65 1.65 0 0 0 9 4.68a1.65 1.65 0 0 0 1-1.51V3a2 2 0 0 1 4 0v.09a1.65 1.65 0 0 0 1 1.51 1.65 1.65 0 0 0 1.82-.33l.06-.06a2 2 0 0 1 2.83 2.83l-.06.06A1.65 1.65 0 0 0 19.4 9a1.65 1.65 0 0 0 1.51 1H21a2 2 0 0 1 0 4h-.09a1.65 1.65 0 0 0-1.51 1z"/>');
+const IcClose  = () => ic('<line x1="18" y1="6" x2="6" y2="18"/><line x1="6" y1="6" x2="18" y2="18"/>',18);
+const IcSearch = () => ic('<circle cx="11" cy="11" r="8"/><path d="m21 21-4.35-4.35"/>',18);
+const IcMore   = () => ic('<circle cx="12" cy="5" r="1"/><circle cx="12" cy="12" r="1"/><circle cx="12" cy="19" r="1"/>');
+const IcWiki   = () => ic('<path d="M4 19.5A2.5 2.5 0 0 1 6.5 17H20"/><path d="M6.5 2H20v20H6.5A2.5 2.5 0 0 1 4 19.5v-15A2.5 2.5 0 0 1 6.5 2z"/>');
+
+/* ── Primitives ── */
+const StatusBar = () => {
+  const T = useT();
+  return (
+    <div style={{height:47,display:'flex',alignItems:'center',justifyContent:'space-between',padding:'0 22px 0 20px',background:T.bg,flexShrink:0,transition:'background .4s'}}>
+      <span style={{fontFamily:T.font,fontSize:15,fontWeight:700,color:T.text,letterSpacing:'-.02em',transition:'color .4s'}}>9:41</span>
+      <div style={{display:'flex',alignItems:'center',gap:6}}>
+        <svg width="17" height="12" viewBox="0 0 17 12" fill={T.text} style={{transition:'fill .4s'}}><path d="M1 8h2v3H1zM5 5h2v6H5zM9 2h2v9H9zM13 0h2v11h-2z"/></svg>
+        <svg width="16" height="12" viewBox="0 0 16 12" fill={T.text} style={{transition:'fill .4s'}}><path d="M8 0C4.8 0 1.9 1.4 0 3.6l1.5 1.5C3 3.3 5.4 2 8 2s5 1.3 6.5 3.1L16 3.6C14.1 1.4 11.2 0 8 0z"/><path d="M8 4C5.8 4 3.8 5 2.5 6.6L4 8.1C5 7 6.4 6 8 6s3 1 4 2.1l1.5-1.5C12.2 5 10.2 4 8 4z"/><circle cx="8" cy="10.5" r="2"/></svg>
+        <svg width="25" height="12" viewBox="0 0 25 12" fill="none"><rect x=".6" y="1" width="20" height="10" rx="3" stroke={T.text} strokeWidth="1.2" style={{transition:'stroke .4s'}}/><rect x="2" y="2.5" width="14" height="7" rx="1.5" fill={T.text} style={{transition:'fill .4s'}}/><path d="M22.6 4.5v3a1.5 1.5 0 0 0 0-3z" fill={T.text} style={{transition:'fill .4s'}}/></svg>
+      </div>
+    </div>
+  );
+};
+
+const Toolbar = ({title, left, right, badge}) => {
+  const T = useT();
+  return (
+    <div style={{height:42,display:'flex',alignItems:'center',padding:'0 12px',background:T.bg,borderBottom:`1px solid ${T.border}`,flexShrink:0,gap:8,transition:'background .4s,border-color .4s'}}>
+      <div style={{minWidth:60,display:'flex',alignItems:'center'}}>{left}</div>
+      <span style={{flex:1,textAlign:'center',fontFamily:T.font,fontSize:16,fontWeight:700,color:T.text,letterSpacing:'-.02em',overflow:'hidden',textOverflow:'ellipsis',whiteSpace:'nowrap',transition:'color .4s'}}>{title}</span>
+      <div style={{minWidth:60,display:'flex',alignItems:'center',justifyContent:'flex-end',gap:4}}>{badge}{right}</div>
+    </div>
+  );
+};
+
+const AiBadge = ({status}) => {
+  const T = useT();
+  const c = {analyzing:{label:'분석 중',color:T.brand}, warning:{label:'확인 필요',color:T.red}}[status];
+  if (!c) return null;
+  return (
+    <div style={{display:'flex',alignItems:'center',gap:4,padding:'3px 8px',borderRadius:999,background:T.bgSubtle,border:`1px solid ${T.border}`,boxShadow:'0 1px 3px rgba(26,27,30,.05)',transition:'background .4s,border-color .4s'}}>
+      <div style={{width:5,height:5,borderRadius:'50%',background:c.color,animation:'sm-pulse 1.5s ease-in-out infinite',transition:'background .4s'}}/>
+      <span style={{fontFamily:T.font,fontSize:10,fontWeight:600,color:c.color,whiteSpace:'nowrap',transition:'color .4s'}}>{c.label}</span>
+    </div>
+  );
+};
+
+const IBtn = ({onClick, children}) => {
+  const T = useT();
+  return (
+    <button onClick={onClick} style={{width:36,height:36,display:'flex',alignItems:'center',justifyContent:'center',background:'none',border:'none',cursor:'pointer',color:T.textSec,borderRadius:8,WebkitTapHighlightColor:'transparent',transition:'color .4s'}}>
+      {children}
+    </button>
+  );
+};
+
+const PressBtn = ({onClick, style, children}) => {
+  const [pressed, setPressed] = useState(false);
+  const base = style.transition || '';
+  return (
+    <button
+      onClick={onClick}
+      onPointerDown={() => setPressed(true)}
+      onPointerUp={() => setPressed(false)}
+      onPointerLeave={() => setPressed(false)}
+      style={{
+        ...style,
+        transform: pressed ? 'scale(0.98)' : 'scale(1)',
+        transition: pressed
+          ? `transform 80ms ease-out${base ? ', '+base : ''}`
+          : `transform 380ms cubic-bezier(0.34,1.56,0.64,1)${base ? ', '+base : ''}`,
+        userSelect:'none', WebkitTapHighlightColor:'transparent',
+      }}
+    >{children}</button>
+  );
+};
+
+const WikiChip = ({type}) => {
+  const T = useT();
+  const map = {
+    character:{bg:T.brandSubtle, color:T.brand,   label:'인물'},
+    place:    {bg:T.greenBg,     color:T.green,   label:'장소'},
+    item:     {bg:T.amberBg,     color:T.amber,   label:'소품'},
+    event:    {bg:T.purpleBg,    color:T.purple,  label:'사건'},
+  };
+  const c = map[type] || {bg:T.bgSubtle, color:T.textSec, label:type};
+  return <span style={{padding:'3px 8px',borderRadius:999,fontSize:10,fontWeight:700,fontFamily:T.font,background:c.bg,color:c.color,transition:'background .4s,color .4s'}}>{c.label}</span>;
+};
+
+/* ── Screens ── */
+const EditorScreen = ({onWikiOpen, aiStatus, shake, isEmpty}) => {
+  const T = useT();
+  const {fontSize, lineHeight, pad, h1, gap} = T.rhythm;
+  return (
+    <div style={{flex:1,display:'flex',flexDirection:'column',overflow:'hidden'}}>
+      <Toolbar
+        title="1장 — 빗소리"
+        left={<span style={{fontFamily:T.font,fontSize:13,color:T.textTert,fontWeight:500,transition:'color .4s'}}>← 소설</span>}
+        badge={<AiBadge status={aiStatus}/>}
+        right={<div style={{display:'flex'}}><IBtn onClick={onWikiOpen}><IcWiki/></IBtn><IBtn><IcMore/></IBtn></div>}
+      />
+      {isEmpty ? (
+        <div style={{flex:1,display:'flex',flexDirection:'column',alignItems:'center',justifyContent:'center',background:T.bg,padding:'0 44px',gap:16,transition:'background .4s'}}>
+          <div style={{width:56,height:56,borderRadius:'50%',background:T.brandSubtle,display:'flex',alignItems:'center',justifyContent:'center',color:T.brand,transition:'background .4s,color .4s'}}>
+            {ic('<path d="M11 4H4a2 2 0 0 0-2 2v14a2 2 0 0 0 2 2h14a2 2 0 0 0 2-2v-7"/><path d="M18.5 2.5a2.121 2.121 0 0 1 3 3L12 15l-4 1 1-4 9.5-9.5z"/>',26)}
+          </div>
+          <div style={{textAlign:'center',display:'flex',flexDirection:'column',gap:6}}>
+            <p style={{fontFamily:T.font,fontSize:17,fontWeight:600,color:T.text,margin:0,letterSpacing:'-.02em',lineHeight:1.4,transition:'color .4s'}}>아직 작성된 원고가 없어요.</p>
+            <p style={{fontFamily:T.font,fontSize:14,color:T.textSec,margin:0,lineHeight:1.65,letterSpacing:'-.01em',transition:'color .4s'}}>첫 문장을 시작해 볼까요?</p>
+          </div>
+          <div style={{height:1,width:32,background:T.border,borderRadius:1,margin:'2px 0',transition:'background .4s'}}/>
+          <p style={{fontFamily:T.font,fontSize:12,color:T.textTert,margin:0,textAlign:'center',lineHeight:1.7,letterSpacing:'-.01em',transition:'color .4s'}}>
+            글을 쓰는 동안 AI가 조용히<br/>설정집과 위키를 채워드려요.
+          </p>
+        </div>
+      ) : (
+        <div style={{
+          flex:1, overflowY:'auto', minHeight:0,
+          padding:`${pad}px ${pad}px 16px`,
+          background:T.bg,
+          animation:shake?'sm-shake 200ms ease-out':'none',
+          transition:'background .4s, padding .35s',
+        }}>
+          <h1 style={{fontFamily:T.font,fontSize:h1,fontWeight:700,color:T.text,letterSpacing:'-.03em',lineHeight:1.2,margin:`0 0 ${gap}px`,transition:'color .4s,font-size .35s,margin .35s'}}
+          >빗소리</h1>
+          {['빗소리가 창문을 두드렸다. 김지우는 커피잔을 두 손으로 감싸 쥐며 창밖을 바라보았다.',
+            '그가 이 카페에 처음 들어선 건 아마 삼 년 전이었을 것이다. 정확하게 기억나지 않지만, 그날도 비가 왔다는 것만큼은 확실했다.',
+            '"저기요."',
+            '낯선 목소리에 고개를 돌렸다. 박민준이 젖은 우산을 접으며 맞은편 자리에 앉고 있었다.',
+          ].map((p, i) => (
+            <p key={i} style={{fontFamily:T.font,fontSize,color:T.text,lineHeight,letterSpacing:'-.01em',margin:`0 0 ${gap}px`,transition:'color .4s,font-size .35s,line-height .35s,margin .35s'}}>{p}</p>
+          ))}
+          <span style={{display:'inline-block',width:2,height:fontSize,background:T.brand,animation:'sm-pulse 1s ease-in-out infinite',verticalAlign:'middle',transition:'background .4s,height .35s'}}/>
+        </div>
+      )}
+      <div style={{height:44,borderTop:`1px solid ${T.border}`,display:'flex',alignItems:'center',padding:'0 8px',background:T.bg,flexShrink:0,gap:2,transition:'background .4s,border-color .4s'}}>
+        {[
+          '<path d="M6 4h8a4 4 0 0 1 4 4 4 4 0 0 1-4 4H6z"/><path d="M6 12h9a4 4 0 0 1 4 4 4 4 0 0 1-4 4H6z"/>',
+          '<line x1="19" y1="4" x2="10" y2="4"/><line x1="14" y1="20" x2="5" y2="20"/><line x1="15" y1="4" x2="9" y2="20"/>',
+          '<path d="M10 13a5 5 0 0 0 7.54.54l3-3a5 5 0 0 0-7.07-7.07l-1.72 1.71"/><path d="M14 11a5 5 0 0 0-7.54-.54l-3 3a5 5 0 0 0 7.07 7.07l1.71-1.71"/>',
+        ].map((d, i) => <IBtn key={i}>{ic(d, 18)}</IBtn>)}
+        <div style={{flex:1}}/>
+        <span style={{fontFamily:T.font,fontSize:12,color:T.textTert,paddingRight:8,transition:'color .4s'}}>128자</span>
+      </div>
+    </div>
+  );
+};
+
+const BrainScreen = () => {
+  const T = useT();
+  const canvasRef = useRef(null);
+  const dragRef   = useRef(null);
+  const ttTimer   = useRef(null);
+
+  const [positions, setPositions] = useState(() =>
+    Object.fromEntries(NODES.map(n => [n.id, {x:n.x, y:n.y}]))
+  );
+  const [hovered,    setHovered]    = useState(null);
+  const [pressed,    setPressed]    = useState(null);
+  const [selected,   setSelected]   = useState(null);
+  const [tooltipId,  setTooltipId]  = useState(null);
+  const [tooltipVis, setTooltipVis] = useState(false);
+  const [filter,     setFilter]     = useState('전체');
+
+  /* tooltip fade-in / fade-out lifecycle */
+  useEffect(() => {
+    clearTimeout(ttTimer.current);
+    if (selected) {
+      setTooltipId(selected); setTooltipVis(false);
+      ttTimer.current = setTimeout(() => setTooltipVis(true), 20);
+    } else {
+      setTooltipVis(false);
+      ttTimer.current = setTimeout(() => setTooltipId(null), 160);
+    }
+    return () => clearTimeout(ttTimer.current);
+  }, [selected]);
+
+  /* which node is focused (hover wins over tap) */
+  const focusId = hovered || selected;
+  const connectedSet = focusId
+    ? new Set([focusId, ...EDGES.flatMap(([a,b]) => a===focusId?[b]:b===focusId?[a]:[])])
+    : null;
+
+  const NODE_C = {
+    character:{fill:T.brand,  bg:T.brandSubtle},
+    place:    {fill:T.green,  bg:T.greenBg},
+    item:     {fill:T.amber,  bg:T.amberBg},
+    event:    {fill:T.purple, bg:T.purpleBg},
+    orphan:   {fill:T.red,    bg:T.redBg},
+  };
+
+  /* ── Drag handlers ── */
+  const handlePointerDown = (e, id) => {
+    e.stopPropagation();
+    e.currentTarget.setPointerCapture(e.pointerId);
+    const rect = canvasRef.current.getBoundingClientRect();
+    const pos  = positions[id];
+    dragRef.current = {id, startCX:e.clientX, startCY:e.clientY,
+      startX:pos.x, startY:pos.y, cW:rect.width, cH:rect.height, moved:false};
+    setPressed(id);
+  };
+  const handlePointerMove = (e) => {
+    if (!dragRef.current) return;
+    const {id,startCX,startCY,startX,startY,cW,cH} = dragRef.current;
+    const dx = e.clientX - startCX, dy = e.clientY - startCY;
+    if (Math.abs(dx) > 4 || Math.abs(dy) > 4) dragRef.current.moved = true;
+    setPositions(p => ({...p, [id]:{
+      x: Math.max(5, Math.min(95, startX + dx/cW*100)),
+      y: Math.max(5, Math.min(95, startY + dy/cH*100)),
+    }}));
+  };
+  const handlePointerUp = (e, id) => {
+    const dr = dragRef.current;
+    dragRef.current = null;
+    setPressed(null);
+    if (dr && !dr.moved) setSelected(prev => prev===id ? null : id);
+  };
+
+  /* tooltip wiki data — fallback for orphan nodes */
+  const wikiEntry = tooltipId
+    ? (WIKI.find(w => w.id===tooltipId) || {
+        id: tooltipId, type:'orphan',
+        name: NODES.find(n => n.id===tooltipId)?.label || tooltipId,
+        desc: '아직 연결되지 않은 이야기예요.',
+        chapter: '—'
+      })
+    : null;
+
+  return (
+    <div style={{flex:1,display:'flex',flexDirection:'column',background:T.bgSubtle,overflow:'hidden',transition:'background .4s'}}>
+      <Toolbar title="세컨드 브레인"/>
+
+      {/* Filter pills */}
+      <div style={{display:'flex',gap:6,padding:'9px 15px',borderBottom:`1px solid ${T.border}`,background:T.bg,flexShrink:0,overflowX:'auto',transition:'background .4s,border-color .4s'}}>
+        {['전체','인물','장소','소품','사건'].map(f => (
+          <div key={f} onClick={()=>setFilter(f)} style={{padding:'5px 13px',borderRadius:999,fontSize:12,fontWeight:f===filter?700:500,fontFamily:T.font,background:f===filter?T.brand:'transparent',color:f===filter?'#fff':T.textSec,cursor:'pointer',letterSpacing:'-.01em',border:f===filter?'none':`1px solid ${T.border}`,flexShrink:0,transition:'background .3s,color .3s,border-color .3s'}}>
+            {f}
+          </div>
+        ))}
+      </div>
+
+      {/* Graph canvas */}
+      <div
+        ref={canvasRef}
+        onClick={e => { if (e.target===canvasRef.current) setSelected(null); }}
+        style={{flex:1,position:'relative',overflow:'hidden'}}
+      >
+        {/* ── Edges SVG ── */}
+        <svg style={{position:'absolute',inset:0,width:'100%',height:'100%',pointerEvents:'none'}} viewBox="0 0 100 100" preserveAspectRatio="none">
+          {EDGES.map(([a,b],i) => {
+            const na=positions[a], nb=positions[b];
+            const hilit = !focusId || a===focusId || b===focusId;
+            return (
+              <line key={i} x1={na.x} y1={na.y} x2={nb.x} y2={nb.y}
+                stroke={hilit && focusId ? T.brand : T.edgeLine}
+                strokeWidth={hilit && focusId ? '1' : '0.6'}
+                style={{opacity:focusId?(hilit?1:0.12):1, transition:'opacity .25s,stroke .25s,stroke-width .25s'}}
+              />
+            );
+          })}
+        </svg>
+
+        {/* ── Nodes ── */}
+        {NODES.map(node => {
+          const c      = NODE_C[node.type];
+          const isSel  = selected === node.id;
+          const isHov  = hovered  === node.id;
+          const isPrs  = pressed  === node.id;
+          const isDrg  = dragRef.current?.id === node.id;
+          const hilit  = !focusId || connectedSet.has(node.id);
+          /* Squash & Anticipation scale */
+          const nodeScale = isPrs ? 0.95 : (isHov || isSel) ? 1.05 : 1;
+
+          return (
+            <div
+              key={node.id}
+              style={{
+                position:'absolute',
+                left:`${positions[node.id].x}%`,
+                top:`${positions[node.id].y}%`,
+                transform:'translate(-50%,-50%)',
+                display:'flex', flexDirection:'column', alignItems:'center', gap:4,
+                cursor: isPrs ? 'grabbing' : 'grab',
+                zIndex: isSel||isPrs ? 10 : 2,
+                /* Staging focus: unfocused nodes dim to 0.18 */
+                opacity: focusId ? (hilit ? 1 : 0.18) : 1,
+                transition: `opacity .22s${isDrg ? '' : ',left .06s ease-out,top .06s ease-out'}`,
+                touchAction:'none', userSelect:'none', WebkitTapHighlightColor:'transparent',
+              }}
+              onPointerDown={e => handlePointerDown(e, node.id)}
+              onPointerMove={handlePointerMove}
+              onPointerUp={e => handlePointerUp(e, node.id)}
+              onPointerEnter={() => { if (!dragRef.current) setHovered(node.id); }}
+              onPointerLeave={() => { if (!dragRef.current || dragRef.current.id!==node.id) setHovered(null); }}
+            >
+              <div style={{
+                width:46, height:46, borderRadius:'50%',
+                background: c.bg,
+                border: `2.5px solid ${isSel ? c.fill : 'transparent'}`,
+                display:'flex', alignItems:'center', justifyContent:'center',
+                boxShadow: isSel
+                  ? `0 0 0 5px ${T.brandSubtle}, 0 4px 16px rgba(26,27,30,.22)`
+                  : '0 2px 6px rgba(26,27,30,.10)',
+                /* spring-back release via cubic-bezier overshoot */
+                transform: `scale(${nodeScale})`,
+                transition: `transform ${isPrs ? '80ms ease-out' : isHov ? '100ms ease-out' : '300ms cubic-bezier(0.34,1.56,0.64,1)'}, border-color .15s, box-shadow .2s, background .4s`,
+                /* orphan gentle breathing instead of harsh flash */
+                animation: node.type==='orphan' ? 'sm-orphan-breathe 2.6s ease-in-out infinite' : 'none',
+              }}>
+                <div style={{width:14, height:14, borderRadius:'50%', background:c.fill, transition:'background .4s'}}/>
+              </div>
+              <span style={{
+                fontFamily:T.font, fontSize:10, fontWeight: isSel ? 700 : 600,
+                color: node.type==='orphan' ? T.red : (isSel ? c.fill : T.text),
+                whiteSpace:'nowrap',
+                textShadow:`0 0 8px ${T.bgSubtle},0 0 8px ${T.bgSubtle}`,
+                transition:'color .2s',
+              }}>{node.label}</span>
+            </div>
+          );
+        })}
+
+        {/* ── Tooltip card (150ms ease-out slide-up) ── */}
+        {tooltipId && (
+          <div style={{
+            position:'absolute', bottom:60, left:14, right:14,
+            background:T.bg, borderRadius:16, padding:'14px 16px',
+            boxShadow:`0 6px 28px rgba(26,27,30,.22), 0 0 0 1px ${T.border}`,
+            zIndex:30,
+            opacity:    tooltipVis ? 1 : 0,
+            transform:  tooltipVis ? 'translateY(0)' : 'translateY(10px)',
+            transition: 'opacity 150ms ease-out, transform 150ms ease-out, background .4s',
+            pointerEvents: tooltipVis ? 'auto' : 'none',
+          }}>
+            <div style={{display:'flex',alignItems:'center',gap:8,marginBottom:7}}>
+              <span style={{fontFamily:T.font,fontSize:15,fontWeight:700,color:T.text,letterSpacing:'-.02em',flex:1,transition:'color .4s'}}>
+                {wikiEntry?.name}
+              </span>
+              {wikiEntry && <WikiChip type={wikiEntry.type}/>}
+              <button onClick={()=>setSelected(null)} style={{width:28,height:28,display:'flex',alignItems:'center',justifyContent:'center',background:'none',border:'none',cursor:'pointer',color:T.textTert,borderRadius:6,flexShrink:0,padding:0}}>
+                <IcClose/>
+              </button>
+            </div>
+            {wikiEntry && (
+              <>
+                <p style={{fontFamily:T.font,fontSize:13,color:T.textSec,margin:'0 0 6px',lineHeight:1.55,letterSpacing:'-.01em',transition:'color .4s'}}>{wikiEntry.desc}</p>
+                <span style={{fontFamily:T.font,fontSize:11,color:T.textTert,transition:'color .4s'}}>마지막 등장: {wikiEntry.chapter}</span>
+              </>
+            )}
+          </div>
+        )}
+
+        {/* ── Orphan warning banner ── */}
+        <div style={{position:'absolute',bottom:12,left:12,right:12}}>
+          <div style={{background:T.redBg,borderRadius:12,padding:'9px 13px',display:'flex',alignItems:'center',gap:8,transition:'background .4s'}}>
+            <div style={{width:6,height:6,borderRadius:'50%',background:T.red,animation:'sm-orphan-breathe 2.6s ease-in-out infinite',flexShrink:0}}/>
+            <span style={{fontFamily:T.font,fontSize:12,color:T.red,letterSpacing:'-.01em'}}>아직 연결되지 않은 이야기예요 — 수상한 남자</span>
+          </div>
+        </div>
+      </div>
+    </div>
+  );
+};
+
+const WikiScreen = () => {
+  const T = useT();
+  return (
+    <div style={{flex:1,display:'flex',flexDirection:'column',background:T.bg,overflow:'hidden',transition:'background .4s'}}>
+      <Toolbar title="위키" right={<IBtn><IcSearch/></IBtn>}/>
+      <div style={{flex:1,overflowY:'auto',padding:'12px 15px',display:'flex',flexDirection:'column',gap:10}}>
+        {WIKI.map(e => (
+          <div key={e.id} style={{background:T.bg,borderRadius:14,padding:'13px 15px',boxShadow:`0 1px 4px rgba(26,27,30,.06),0 0 0 1px ${T.border}`,cursor:'pointer',transition:'background .4s,box-shadow .4s'}}>
+            <div style={{display:'flex',alignItems:'center',justifyContent:'space-between',marginBottom:5}}>
+              <span style={{fontFamily:T.font,fontSize:15,fontWeight:700,color:T.text,letterSpacing:'-.01em',transition:'color .4s'}}>{e.name}</span>
+              <WikiChip type={e.type}/>
+            </div>
+            <p style={{fontFamily:T.font,fontSize:13,color:T.textSec,margin:'0 0 5px',lineHeight:1.5,letterSpacing:'-.01em',transition:'color .4s'}}>{e.desc}</p>
+            <span style={{fontFamily:T.font,fontSize:11,color:T.textTert,transition:'color .4s'}}>마지막 등장: {e.chapter}</span>
+          </div>
+        ))}
+      </div>
+    </div>
+  );
+};
+
+const SettingsScreen = () => {
+  const T = useT();
+  const [toggles, setToggles] = useState({spell:true,auto:true,conflict:true,wiki:false});
+  const tog = k => setToggles(p => ({...p,[k]:!p[k]}));
+  const Toggle = ({on, onClick}) => (
+    <div onClick={onClick} style={{width:44,height:26,borderRadius:13,background:on?T.brand:'#C8CBDA',padding:3,display:'flex',alignItems:'center',justifyContent:on?'flex-end':'flex-start',cursor:'pointer',transition:'background .2s',flexShrink:0}}>
+      <div style={{width:20,height:20,borderRadius:'50%',background:'#fff',boxShadow:'0 1px 3px rgba(0,0,0,.18)'}}/>
+    </div>
+  );
+  const Row = ({label, value, toggleKey}) => (
+    <div style={{display:'flex',alignItems:'center',justifyContent:'space-between',padding:'14px 0',borderBottom:`1px solid ${T.border}`,transition:'border-color .4s'}}>
+      <span style={{fontFamily:T.font,fontSize:16,color:T.text,letterSpacing:'-.01em',transition:'color .4s'}}>{label}</span>
+      {toggleKey
+        ? <Toggle on={toggles[toggleKey]} onClick={()=>tog(toggleKey)}/>
+        : <span style={{fontFamily:T.font,fontSize:14,color:T.textTert,transition:'color .4s'}}>{value}</span>}
+    </div>
+  );
+  const Section = ({title}) => (
+    <div style={{fontFamily:T.font,fontSize:12,fontWeight:700,color:T.textTert,letterSpacing:'.04em',textTransform:'uppercase',padding:'20px 0 8px',transition:'color .4s'}}>{title}</div>
+  );
+  return (
+    <div style={{flex:1,display:'flex',flexDirection:'column',background:T.bg,overflow:'hidden',transition:'background .4s'}}>
+      <Toolbar title="설정"/>
+      <div style={{flex:1,overflowY:'auto',padding:'0 22px'}}>
+        <Section title="에디터"/>
+        <Row label="글꼴 크기" value="18px"/>
+        <Row label="줄 간격" value="1.8"/>
+        <Row label="맞춤법 검사" toggleKey="spell"/>
+        <Section title="AI 기능"/>
+        <Row label="자동 분석" toggleKey="auto"/>
+        <Row label="설정 충돌 알림" toggleKey="conflict"/>
+        <Row label="위키 자동 생성" toggleKey="wiki"/>
+        <Section title="계정"/>
+        <Row label="구독 플랜" value="스탠다드"/>
+        <Row label="데이터 백업" value="방금 전"/>
+      </div>
+    </div>
+  );
+};
+
+/* ── NavBar ── */
+const NavBar = ({active, onChange}) => {
+  const T = useT();
+  const tabs = [
+    {id:'editor',   icon:<IcEdit/>,  label:'에디터'},
+    {id:'brain',    icon:<IcBrain/>, label:'브레인'},
+    {id:'wiki',     icon:<IcBook/>,  label:'위키'},
+    {id:'settings', icon:<IcGear/>,  label:'설정'},
+  ];
+  return (
+    <div style={{height:50,background:T.bg,borderTop:`1px solid ${T.border}`,display:'flex',alignItems:'stretch',flexShrink:0,transition:'background .4s,border-color .4s'}}>
+      {tabs.map(({id, icon, label}) => {
+        const on = active === id;
+        return (
+          <button key={id} onClick={()=>onChange(id)} style={{flex:1,display:'flex',flexDirection:'column',alignItems:'center',justifyContent:'center',gap:3,background:'none',border:'none',cursor:'pointer',color:on?T.brand:T.textTert,padding:0,transition:'color .2s',fontFamily:T.font,WebkitTapHighlightColor:'transparent'}}>
+            {icon}
+            <span style={{fontSize:10,fontWeight:on?700:400,letterSpacing:'-.01em',lineHeight:1}}>{label}</span>
+          </button>
+        );
+      })}
+    </div>
+  );
+};
+
+/* ── Wiki Drawer ── */
+const WikiDrawer = ({isOpen, onClose}) => {
+  const T = useT();
+  const [vis, setVis] = useState(false);
+  const [mnt, setMnt] = useState(false);
+  useEffect(() => {
+    if (isOpen) {setMnt(true); requestAnimationFrame(()=>requestAnimationFrame(()=>setVis(true)));}
+    else {setVis(false); const t=setTimeout(()=>setMnt(false),300); return()=>clearTimeout(t);}
+  }, [isOpen]);
+  if (!mnt) return null;
+  return (
+    <>
+      <div onClick={onClose} style={{position:'absolute',inset:0,background:'rgba(26,27,30,.35)',opacity:vis?1:0,transition:'opacity .28s',zIndex:50,backdropFilter:'blur(3px)',WebkitBackdropFilter:'blur(3px)'}}/>
+      <div style={{position:'absolute',top:0,right:0,bottom:0,width:'78%',background:T.bg,boxShadow:'-4px 0 24px rgba(26,27,30,.10)',zIndex:51,transform:vis?'translateX(0)':'translateX(100%)',transition:`transform .28s cubic-bezier(0,0,.2,1),background .4s`,display:'flex',flexDirection:'column'}}>
+        <div style={{height:47,display:'flex',alignItems:'center',padding:'0 14px',borderBottom:`1px solid ${T.border}`,flexShrink:0,transition:'border-color .4s'}}>
+          <span style={{fontFamily:T.font,fontSize:16,fontWeight:700,color:T.text,letterSpacing:'-.02em',flex:1,transition:'color .4s'}}>위키 서랍</span>
+          <IBtn onClick={onClose}><IcClose/></IBtn>
+        </div>
+        <div style={{flex:1,overflowY:'auto',padding:'10px 12px',display:'flex',flexDirection:'column',gap:8}}>
+          {WIKI.slice(0,4).map(e => (
+            <div key={e.id} style={{background:T.bgSubtle,borderRadius:12,padding:'11px 13px',cursor:'pointer',transition:'background .4s'}}>
+              <div style={{display:'flex',alignItems:'center',gap:6,marginBottom:4}}>
+                <span style={{fontFamily:T.font,fontSize:14,fontWeight:700,color:T.text,flex:1,transition:'color .4s'}}>{e.name}</span>
+                <WikiChip type={e.type}/>
+              </div>
+              <p style={{fontFamily:T.font,fontSize:12,color:T.textSec,margin:0,lineHeight:1.5,transition:'color .4s'}}>{e.desc}</p>
+            </div>
+          ))}
+        </div>
+      </div>
+    </>
+  );
+};
+
+/* ── Warning Sheet ── */
+const WarningSheet = ({isOpen, onClose, onConfirm}) => {
+  const T = useT();
+  const [vis, setVis] = useState(false);
+  const [mnt, setMnt] = useState(false);
+  useEffect(() => {
+    if (isOpen) {setMnt(true); requestAnimationFrame(()=>requestAnimationFrame(()=>setVis(true)));}
+    else {setVis(false); const t=setTimeout(()=>setMnt(false),300); return()=>clearTimeout(t);}
+  }, [isOpen]);
+  if (!mnt) return null;
+  return (
+    <>
+      <div onClick={onClose} style={{position:'absolute',inset:0,background:'rgba(26,27,30,.4)',opacity:vis?1:0,transition:'opacity .28s',zIndex:100,backdropFilter:'blur(4px)',WebkitBackdropFilter:'blur(4px)'}}/>
+      <div style={{position:'absolute',bottom:0,left:0,right:0,background:T.bg,borderRadius:'18px 18px 0 0',padding:'12px 20px 36px',boxShadow:'0 8px 32px rgba(26,27,30,.14)',zIndex:101,transform:vis?'translateY(0)':'translateY(100%)',transition:`transform 200ms ease-out,background .4s`}}>
+        <div style={{width:36,height:4,borderRadius:2,background:T.border,margin:'0 auto 20px',transition:'background .4s'}}/>
+        <div style={{background:T.redBg,borderRadius:12,padding:'11px 14px',marginBottom:16,display:'flex',gap:9,alignItems:'flex-start',transition:'background .4s'}}>
+          <div style={{width:6,height:6,borderRadius:'50%',background:T.red,marginTop:5,flexShrink:0,animation:'sm-pulse 1.5s ease-in-out infinite'}}/>
+          <p style={{fontFamily:T.font,fontSize:13,color:T.red,margin:0,lineHeight:1.55,fontWeight:600}}>설정 충돌을 발견했어요</p>
+        </div>
+        <h3 style={{fontFamily:T.font,fontSize:18,fontWeight:700,color:T.text,margin:'0 0 8px',letterSpacing:'-.02em',transition:'color .4s'}}>이야기가 맞지 않아요</h3>
+        <p style={{fontFamily:T.font,fontSize:14,color:T.textSec,margin:'0 0 24px',lineHeight:1.7,letterSpacing:'-.01em',transition:'color .4s'}}>
+          박민준이 2장에서 이미 자리를 떠났는데, 여기서 다시 등장하고 있어요. 설정을 확인해볼까요?
+        </p>
+        <PressBtn onClick={onConfirm} style={{width:'100%',height:53,background:T.brand,color:'#fff',border:'none',borderRadius:14,fontFamily:T.font,fontSize:16,fontWeight:700,cursor:'pointer',letterSpacing:'-.01em',marginBottom:10,transition:'background .4s'}}>
+          설정 확인하기
+        </PressBtn>
+        <PressBtn onClick={onClose} style={{width:'100%',height:44,background:T.bgSubtle,color:T.textSec,border:'none',borderRadius:14,fontFamily:T.font,fontSize:15,fontWeight:500,cursor:'pointer',letterSpacing:'-.01em',transition:'background .4s,color .4s'}}>
+          그냥 둘래요
+        </PressBtn>
+      </div>
+    </>
+  );
+};
+
+/* ── App ── */
+const App = () => {
+  const [tw, setTweak] = useTweaks(TWEAK_DEFAULTS);
+  const theme = makeTheme(tw.accent, tw.atmosphere, tw.rhythm);
+
+  const [tab, setTab] = useState('editor');
+  const [warn, setWarn] = useState(false);
+  const [drawer, setDrawer] = useState(false);
+  const [shake, setShake] = useState(false);
+  const [aiStatus, setAiStatus] = useState('analyzing');
+
+  useEffect(() => {
+    if (tab === 'editor') {
+      setAiStatus('analyzing');
+      const t1 = setTimeout(()=>setAiStatus('warning'), 3000);
+      const t2 = setTimeout(()=>{setShake(true);setWarn(true);setTimeout(()=>setShake(false),400);}, 3500);
+      return () => {clearTimeout(t1);clearTimeout(t2);};
+    } else {
+      setAiStatus('analyzing'); setWarn(false); setDrawer(false);
+    }
+  }, [tab]);
+
+  return (
+    <ThemeCtx.Provider value={theme}>
+      {/* Full-screen backdrop — picks up atmosphere deviceBg */}
+      <div style={{position:'fixed',inset:0,background:theme.deviceBg,display:'flex',alignItems:'center',justifyContent:'center',transition:'background .6s'}}>
+        <div style={{width:390,height:844,background:theme.bg,borderRadius:44,overflow:'hidden',position:'relative',display:'flex',flexDirection:'column',boxShadow:'0 40px 100px rgba(0,0,0,.55),0 0 0 1.5px rgba(255,255,255,.12)',transition:'background .4s'}}>
+          <StatusBar/>
+          <div style={{flex:1,display:'flex',flexDirection:'column',overflow:'hidden',position:'relative'}}>
+            {tab==='editor'   && <EditorScreen onWikiOpen={()=>setDrawer(true)} aiStatus={aiStatus} shake={shake} isEmpty={tw.emptyState}/>}
+            {tab==='brain'    && <BrainScreen/>}
+            {tab==='wiki'     && <WikiScreen/>}
+            {tab==='settings' && <SettingsScreen/>}
+            <WikiDrawer isOpen={drawer} onClose={()=>setDrawer(false)}/>
+            <WarningSheet isOpen={warn} onClose={()=>setWarn(false)} onConfirm={()=>{setWarn(false);setTab('wiki');}}/>
+          </div>
+          <NavBar active={tab} onChange={setTab}/>
+        </div>
+      </div>
+
+      {/* Tweaks panel — floats outside the phone frame */}
+      <TweaksPanel title="Tweaks">
+        <TweakSection label="분위기"/>
+        <TweakRadio
+          label="배경 분위기"
+          value={tw.atmosphere}
+          options={['낮','황혼','밤']}
+          onChange={v => setTweak('atmosphere', v)}
+        />
+        <TweakSection label="에디터 리듬"/>
+        <TweakRadio
+          label="글쓰기 밀도"
+          value={tw.rhythm}
+          options={['넓게','보통','빽빽히']}
+          onChange={v => setTweak('rhythm', v)}
+        />
+        <TweakSection label="강조 색상"/>
+        <TweakColor
+          label="브랜드 색상"
+          value={tw.accent}
+          options={['#1F4EF5','#7C3AED','#16A34A','#D97706']}
+          onChange={v => setTweak('accent', v)}
+        />
+        <TweakSection label="엣지 케이스"/>
+        <TweakToggle
+          label="빈 에디터 화면"
+          value={tw.emptyState}
+          onChange={v => setTweak('emptyState', v)}
+        />
+      </TweaksPanel>
+    </ThemeCtx.Provider>
+  );
+};
+
+ReactDOM.createRoot(document.getElementById('root')).render(<App/>);
+</script>
+</body>
+</html>

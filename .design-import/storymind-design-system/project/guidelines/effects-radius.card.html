@@ -1,0 +1,24 @@
+<!-- @dsCard group="Effects" viewport="700x140" name="Border Radius" subtitle="xs 4px → full 9999px · 14px (lg) is the primary card radius" -->
+<!DOCTYPE html>
+<html lang="ko">
+<head>
+<meta charset="UTF-8">
+<link rel="stylesheet" href="../styles.css">
+<style>
+  body { margin:0; padding:20px 28px; background:#fff; display:flex; align-items:center; justify-content:space-between; gap:12px; height:140px; box-sizing:border-box; overflow:hidden; font-family:var(--font-sans,sans-serif); }
+  .item { flex:1; display:flex; flex-direction:column; align-items:center; gap:8px; }
+  .box { width:52px; height:52px; background:var(--blue-50,#EBF0FF); border:2px solid var(--blue-200,#ADCDFF); }
+  .name { font-size:10px; font-weight:700; color:var(--neutral-500,#6B7089); }
+  .val { font-size:9px; color:var(--neutral-400,#9EA3B3); font-family:monospace; }
+</style>
+</head>
+<body>
+  <div class="item"><div class="box" style="border-radius:var(--radius-xs)"></div><div class="name">xs</div><div class="val">4px</div></div>
+  <div class="item"><div class="box" style="border-radius:var(--radius-sm)"></div><div class="name">sm</div><div class="val">6px</div></div>
+  <div class="item"><div class="box" style="border-radius:var(--radius-md)"></div><div class="name">md</div><div class="val">10px</div></div>
+  <div class="item"><div class="box" style="border-radius:var(--radius-lg)"></div><div class="name">lg ✦</div><div class="val">14px</div></div>
+  <div class="item"><div class="box" style="border-radius:var(--radius-xl)"></div><div class="name">xl</div><div class="val">18px</div></div>
+  <div class="item"><div class="box" style="border-radius:var(--radius-2xl)"></div><div class="name">2xl</div><div class="val">24px</div></div>
+  <div class="item"><div class="box" style="border-radius:var(--radius-full)"></div><div class="name">full</div><div class="val">9999px</div></div>
+</body>
+</html>

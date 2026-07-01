@@ -1,0 +1,38 @@
+<!-- @dsCard group="Colors" viewport="700x140" name="Node Colors" subtitle="Second Brain graph node color system" -->
+<!DOCTYPE html>
+<html lang="ko">
+<head>
+<meta charset="UTF-8">
+<link rel="stylesheet" href="../styles.css">
+<style>
+  body { margin:0; padding:18px 24px; background:#fff; display:flex; align-items:center; gap:10px; height:140px; box-sizing:border-box; overflow:hidden; font-family:var(--font-sans,sans-serif); }
+  .node { display:flex; flex-direction:column; align-items:center; gap:7px; flex:1; }
+  .badge { padding:7px 0; width:100%; border-radius:10px; display:flex; align-items:center; justify-content:center; gap:5px; font-size:13px; font-weight:700; letter-spacing:-.01em; }
+  .dot { width:7px; height:7px; border-radius:50%; }
+  .type { font-size:10px; font-weight:600; color:var(--neutral-400,#9EA3B3); }
+</style>
+</head>
+<body>
+<div class="node">
+  <div class="badge" style="background:var(--node-character-bg);color:var(--node-character)"><div class="dot" style="background:var(--node-character)"></div>인물</div>
+  <div class="type">Character</div>
+</div>
+<div class="node">
+  <div class="badge" style="background:var(--node-place-bg);color:var(--node-place)"><div class="dot" style="background:var(--node-place)"></div>장소</div>
+  <div class="type">Place</div>
+</div>
+<div class="node">
+  <div class="badge" style="background:var(--node-item-bg);color:var(--node-item)"><div class="dot" style="background:var(--node-item)"></div>소품</div>
+  <div class="type">Item</div>
+</div>
+<div class="node">
+  <div class="badge" style="background:var(--node-event-bg);color:var(--node-event)"><div class="dot" style="background:var(--node-event)"></div>사건</div>
+  <div class="type">Event</div>
+</div>
+<div class="node">
+  <div class="badge" style="background:var(--node-orphan-bg);color:var(--node-orphan)">
+    <div class="dot" style="background:var(--node-orphan);animation:sm-pulse 1.5s ease-in-out infinite"></div>미연결</div>
+  <div class="type">Orphan ✦ blink</div>
+</div>
+</body>
+</html>

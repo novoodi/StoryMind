@@ -1,0 +1,47 @@
+/* ─────────────────────────────────────────────────────
+   StoryMind · Spacing & Layout Tokens
+   4 px base grid
+   ───────────────────────────────────────────────────── */
+:root {
+
+  /* ── Base Scale ── */
+  --space-0:  0px;
+  --space-1:  4px;
+  --space-2:  8px;
+  --space-3:  12px;
+  --space-4:  16px;
+  --space-5:  20px;
+  --space-6:  24px;
+  --space-8:  32px;
+  --space-10: 40px;
+  --space-12: 48px;
+  --space-16: 64px;
+  --space-20: 80px;
+  --space-24: 96px;
+
+  /* ── Screen Padding (context-dependent, per spec) ── */
+  --layout-padding-screen:  15px;  /* Dashboard / Second Brain — open, airy */
+  --layout-padding-focused: 22px;  /* Editor / Settings — concentrated */
+
+  /* ── Fixed Chrome Heights ── */
+  --layout-status-bar:    47px;   /* iOS status bar region */
+  --layout-toolbar:       42px;   /* Top toolbar (spec: 42 px strict) */
+  --layout-nav:           50px;   /* Bottom nav bar (spec: 50 px strict) */
+  --layout-nav-icon:      22px;   /* Nav icon size (spec: 22 × 22 px) */
+
+  /* ── Touch Targets & Button Heights (Fitts's Law) ── */
+  --touch-min:   44px;  /* Absolute minimum touch target */
+  --button-sm:   36px;  /* Secondary / inline actions */
+  --button-md:   44px;  /* Standard actions */
+  --button-lg:   53px;  /* Primary CTA (spec: 53–55 px) */
+  --button-xl:   55px;  /* Large primary CTA */
+
+  /* ── Border Radius ── */
+  --radius-xs:   4px;
+  --radius-sm:   6px;
+  --radius-md:   10px;
+  --radius-lg:   14px;
+  --radius-xl:   18px;
+  --radius-2xl:  24px;
+  --radius-full: 9999px;
+}

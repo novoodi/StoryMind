@@ -1,0 +1,24 @@
+<!-- @dsCard group="Colors" viewport="700x150" name="Surfaces & Borders" subtitle="Surface and border semantic tokens" -->
+<!DOCTYPE html>
+<html lang="ko">
+<head>
+<meta charset="UTF-8">
+<link rel="stylesheet" href="../styles.css">
+<style>
+  body { margin:0; padding:20px 24px; background:var(--neutral-100,#F2F4F9); display:flex; align-items:center; gap:10px; height:150px; box-sizing:border-box; overflow:hidden; font-family:var(--font-sans,sans-serif); flex-wrap:wrap; }
+  .chip { display:flex; flex-direction:column; gap:4px; align-items:center; }
+  .swatch { width:68px; height:52px; border-radius:10px; }
+  .n { font-size:9px; font-weight:600; color:var(--neutral-400,#9EA3B3); text-align:center; letter-spacing:-.01em; }
+  .v { font-size:8.5px; color:var(--neutral-300,#C8CBDA); font-family:monospace; text-align:center; }
+</style>
+</head>
+<body>
+<div class="chip"><div class="swatch" style="background:var(--surface-base);box-shadow:0 0 0 1px var(--neutral-200)"></div><div class="n">surface-base</div><div class="v">#FFFFFF</div></div>
+<div class="chip"><div class="swatch" style="background:var(--surface-subtle)"></div><div class="n">surface-subtle</div><div class="v">#F8F9FC</div></div>
+<div class="chip"><div class="swatch" style="background:var(--surface-brand)"></div><div class="n">surface-brand</div><div class="v">#1F4EF5</div></div>
+<div class="chip"><div class="swatch" style="background:var(--surface-warning)"></div><div class="n">surface-warning</div><div class="v">#FFF0F0</div></div>
+<div class="chip"><div class="swatch" style="background:var(--border-default);height:3px;border-radius:2px;width:68px;margin-top:24px"></div><div class="n">border-default</div><div class="v">#E5E7EF</div></div>
+<div class="chip"><div class="swatch" style="background:var(--border-strong);height:3px;border-radius:2px;width:68px;margin-top:24px"></div><div class="n">border-strong</div><div class="v">#C8CBDA</div></div>
+<div class="chip"><div class="swatch" style="background:var(--border-brand);height:3px;border-radius:2px;width:68px;margin-top:24px"></div><div class="n">border-brand</div><div class="v">#1F4EF5</div></div>
+</body>
+</html>

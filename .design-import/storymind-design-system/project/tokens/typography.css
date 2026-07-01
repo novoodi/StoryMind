@@ -1,0 +1,41 @@
+/* ─────────────────────────────────────────────────────
+   StoryMind · Typography Tokens
+   ───────────────────────────────────────────────────── */
+:root {
+
+  /* ── Font Families ── */
+  --font-sans: 'Pretendard', -apple-system, BlinkMacSystemFont,
+    'Apple SD Gothic Neo', 'Noto Sans KR', 'Segoe UI', sans-serif;
+  --font-mono: 'JetBrains Mono', 'Fira Code', ui-monospace,
+    'Cascadia Code', monospace;
+
+  /* ── Size Scale ── */
+  --text-xs:   11px;   /* Tiny labels only */
+  --text-sm:   12px;   /* Caption / AI status */
+  --text-base: 14px;   /* UI labels, metadata */
+  --text-md:   16px;   /* Body minimum (mobile) */
+  --text-lg:   18px;   /* Editor body text */
+  --text-xl:   20px;   /* Body maximum */
+  --text-2xl:  24px;   /* Section headers */
+  --text-3xl:  28px;   /* Page titles */
+  --text-4xl:  32px;   /* Chapter titles (H1 min, per spec) */
+  --text-5xl:  38px;   /* Hero / dashboard headlines */
+
+  /* ── Font Weights ── */
+  --font-weight-regular:  400;
+  --font-weight-medium:   500;
+  --font-weight-semibold: 600;
+  --font-weight-bold:     700;
+
+  /* ── Line Heights ── */
+  --leading-tight:    1.2;   /* Headlines */
+  --leading-snug:     1.35;  /* Sub-titles */
+  --leading-normal:   1.5;   /* UI copy */
+  --leading-relaxed:  1.65;  /* Short paragraphs */
+  --leading-loose:    1.8;   /* Editor body — long reading */
+
+  /* ── Letter Spacing ── */
+  --tracking-tight:  -0.03em;  /* Large display text */
+  --tracking-normal: -0.01em;  /* Body & UI (Pretendard optimised) */
+  --tracking-wide:    0.02em;  /* Captions, all-caps labels */
+}
