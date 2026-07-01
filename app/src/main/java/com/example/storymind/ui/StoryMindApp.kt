@@ -16,9 +16,10 @@ import androidx.compose.runtime.setValue
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.platform.LocalInspectionMode
+import com.example.storymind.ai.ChapterProgress
 import com.example.storymind.ai.IngestService
 import com.example.storymind.ai.OnDeviceEngine
-import com.example.storymind.ai.layoutNodes
+import com.example.storymind.ai.merge
 import com.example.storymind.data.MockData
 import com.example.storymind.ui.components.SmAiStatus
 import com.example.storymind.ui.components.SmBottomSheet
@@ -32,15 +33,15 @@ import com.example.storymind.ui.screens.SettingsScreen
 import com.example.storymind.ui.screens.WikiScreen
 
 private const val TAG = "StoryMindApp"
-private const val CHAPTER_LABEL = "1장"
 
 /**
  * App root — mirrors the prototype's App component: tab switching, the
  * editor's AI status, the wiki drawer, and the warning bottom sheet.
  *
- * On first composition (skipped in Compose previews), runs a single on-device
- * ingest pass over the fixed manuscript (MockData.chapterParagraphs) and swaps
- * the MockData preview content for the real result once it lands.
+ * On first composition (skipped in Compose previews), runs an on-device ingest pass over
+ * every chapter in MockData.chapters, in order, feeding each chapter the wiki entries
+ * accumulated from the ones before it so recurring entities keep a stable id. Swaps the
+ * MockData preview content for the real, merged result once it lands.
  */
 @Composable
 fun StoryMindApp(modifier: Modifier = Modifier) {
@@ -73,15 +74,21 @@ fun StoryMindApp(modifier: Modifier = Modifier) {
         aiStatus = SmAiStatus.Analyzing
         try {
             engine.initialize()
-            val result = IngestService(engine::generate).ingest(
-                chapterLabel = CHAPTER_LABEL,
-                title = MockData.chapterTitle,
-                paragraphs = MockData.chapterParagraphs,
-            )
-            graphNodes = layoutNodes(result.nodes)
-            graphEdges = result.edges
-            wikiEntries = result.wikiEntries
-            orphanIds = result.orphanIds
+            val service = IngestService(engine::generate)
+            var progress = ChapterProgress()
+            MockData.chapters.forEach { chapter ->
+                val result = service.ingest(
+                    chapterLabel = chapter.label,
+                    title = chapter.title ?: chapter.label,
+                    paragraphs = chapter.paragraphs,
+                    existingWiki = progress.wikiEntries,
+                )
+                progress = progress.merge(result)
+            }
+            graphNodes = progress.nodes
+            graphEdges = progress.edges
+            wikiEntries = progress.wikiEntries
+            orphanIds = progress.orphanIds
             aiStatus = SmAiStatus.Done
         } catch (e: Exception) {
             Log.w(TAG, "On-device ingest failed, keeping MockData preview", e)

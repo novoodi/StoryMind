@@ -66,10 +66,10 @@ class IngestParserTest {
     }
 
     @Test
-    fun `falls back to empty result when the extracted JSON block is malformed`() {
+    fun `falls back to empty result when the extracted JSON block is malformed beyond comma repair`() {
         val raw = """
             잡담 텍스트
-            { "chapter_summary": "요약" "entities": [] }
+            { "chapter_summary" "요약", "entities": [] }
             마무리 텍스트
         """.trimIndent()
 
@@ -78,6 +78,52 @@ class IngestParserTest {
         assertEquals("", result.chapterSummary)
         assertTrue(result.entities.isEmpty())
         assertTrue(result.relations.isEmpty())
+    }
+
+    @Test
+    fun `inserts a comma missing between sibling object members`() {
+        val raw = """
+            {
+              "chapter_summary": "요약",
+              "entities": [
+                {"id":"yul","type":"character","name":"율","desc":"주인공"},
+                {
+                  "id": "꿈 기록부"
+                  "type": "item",
+                  "name": "꿈 기록부",
+                  "desc": "중요한 자료"
+                }
+              ],
+              "relations": [
+                {"from":"yul","to":"꿈 기록부"}
+              ]
+            }
+        """.trimIndent()
+
+        val result = IngestParser.parse(raw)
+
+        assertEquals(2, result.entities.size)
+        assertEquals("꿈 기록부", result.entities[1].id)
+        assertEquals(SmBadgeType.Item, result.entities[1].type)
+        assertEquals(1, result.relations.size)
+    }
+
+    @Test
+    fun `inserts a comma missing between array elements`() {
+        val raw = """
+            {
+              "chapter_summary": "요약",
+              "entities": [
+                {"id":"a","type":"character","name":"A","desc":"a"}
+                {"id":"b","type":"character","name":"B","desc":"b"}
+              ],
+              "relations": []
+            }
+        """.trimIndent()
+
+        val result = IngestParser.parse(raw)
+
+        assertEquals(2, result.entities.size)
     }
 
     @Test

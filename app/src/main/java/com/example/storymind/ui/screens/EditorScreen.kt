@@ -62,7 +62,7 @@ fun EditorScreen(
 ) {
     Column(modifier = modifier.fillMaxSize()) {
         SmToolbar(
-            title = "1장 — 빗소리",
+            title = "${MockData.chapters.last().label} — ${MockData.chapters.first().title}",
             left = {
                 Text(
                     text = "← 소설",
@@ -171,24 +171,38 @@ private fun EditorBody(shakeTrigger: Int) {
             .verticalScroll(scroll)
             .padding(horizontal = 22.dp, vertical = 22.dp),
     ) {
-        Text(
-            text = MockData.chapterTitle,
-            color = SmColors.textPrimary,
-            fontFamily = Pretendard,
-            fontWeight = FontWeight.Bold,
-            fontSize = 30.sp,
-            lineHeight = 36.sp,
-            modifier = Modifier.padding(bottom = 18.dp),
-        )
-        MockData.chapterParagraphs.forEach { paragraph ->
-            Text(
-                text = paragraph,
-                color = SmColors.textPrimary,
-                fontFamily = Pretendard,
-                fontSize = 18.sp,
-                lineHeight = 32.sp,
-                modifier = Modifier.padding(bottom = 18.dp),
-            )
+        MockData.chapters.forEachIndexed { index, chapter ->
+            if (index > 0) {
+                Text(
+                    text = chapter.label,
+                    color = SmColors.textTertiary,
+                    fontFamily = Pretendard,
+                    fontWeight = FontWeight.Bold,
+                    fontSize = 13.sp,
+                    modifier = Modifier.padding(top = 10.dp, bottom = 10.dp),
+                )
+            }
+            if (chapter.title != null) {
+                Text(
+                    text = chapter.title,
+                    color = SmColors.textPrimary,
+                    fontFamily = Pretendard,
+                    fontWeight = FontWeight.Bold,
+                    fontSize = 30.sp,
+                    lineHeight = 36.sp,
+                    modifier = Modifier.padding(bottom = 18.dp),
+                )
+            }
+            chapter.paragraphs.forEach { paragraph ->
+                Text(
+                    text = paragraph,
+                    color = SmColors.textPrimary,
+                    fontFamily = Pretendard,
+                    fontSize = 18.sp,
+                    lineHeight = 32.sp,
+                    modifier = Modifier.padding(bottom = 18.dp),
+                )
+            }
         }
         val transition = rememberInfiniteTransition(label = "cursor")
         val cursorAlpha by transition.animateFloat(

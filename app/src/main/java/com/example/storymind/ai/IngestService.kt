@@ -28,14 +28,32 @@ data class IngestResult(
  */
 class IngestService(private val engine: OnDeviceTextEngine) {
 
-    suspend fun ingest(chapterLabel: String, title: String, paragraphs: List<String>): IngestResult {
-        val prompt = IngestSchema.buildIngestPrompt(title, paragraphs)
+    /**
+     * [existingWiki] carries entities already established in earlier chapters. It's forwarded
+     * to the model as context so it reuses their ids/names, and also backs a name-based safety
+     * net here: if the model still mints a fresh id for something whose name matches an existing
+     * entry, that id is rewritten to the established one before nodes/edges are built.
+     */
+    suspend fun ingest(
+        chapterLabel: String,
+        title: String,
+        paragraphs: List<String>,
+        existingWiki: List<WikiEntry> = emptyList(),
+    ): IngestResult {
+        val prompt = IngestSchema.buildIngestPrompt(title, paragraphs, existingWiki)
         val raw = engine.generate(prompt)
         val parsed = IngestParser.parse(raw)
 
+        val idByName = existingWiki.associateBy({ it.name.trim() }, { it.id })
+        val idRemap = parsed.entities
+            .filter { it.id !in idByName.values }
+            .mapNotNull { entity -> idByName[entity.name.trim()]?.let { entity.id to it } }
+            .toMap()
+        fun resolvedId(id: String) = idRemap[id] ?: id
+
         val wikiEntries = parsed.entities.map { entity ->
             WikiEntry(
-                id = entity.id,
+                id = resolvedId(entity.id),
                 type = entity.type,
                 name = entity.name,
                 desc = entity.desc,
@@ -44,13 +62,13 @@ class IngestService(private val engine: OnDeviceTextEngine) {
         }
 
         val nodes = parsed.entities.map { entity ->
-            GraphNode(id = entity.id, type = entity.type, label = entity.name, x = 0f, y = 0f)
+            GraphNode(id = resolvedId(entity.id), type = entity.type, label = entity.name, x = 0f, y = 0f)
         }
 
-        val knownIds = parsed.entities.mapTo(mutableSetOf()) { it.id }
+        val knownIds = nodes.mapTo(mutableSetOf()) { it.id }
         val edges = parsed.relations
+            .map { GraphEdge(from = resolvedId(it.from), to = resolvedId(it.to)) }
             .filter { it.from in knownIds && it.to in knownIds }
-            .map { GraphEdge(from = it.from, to = it.to) }
 
         val connectedIds = edges.flatMapTo(mutableSetOf()) { listOf(it.from, it.to) }
         val orphanIds = knownIds - connectedIds

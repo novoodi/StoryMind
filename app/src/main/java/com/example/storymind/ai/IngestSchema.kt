@@ -1,5 +1,8 @@
 package com.example.storymind.ai
 
+import com.example.storymind.data.WikiEntry
+import com.example.storymind.ui.components.SmBadgeType
+
 /**
  * Builds the prompt sent to the on-device Gemma model to turn a chapter's manuscript text
  * into structured wiki data (entities + relations + summary).
@@ -10,8 +13,23 @@ package com.example.storymind.ai
  */
 object IngestSchema {
 
-    fun buildIngestPrompt(chapterTitle: String, paragraphs: List<String>): String {
+    fun buildIngestPrompt(
+        chapterTitle: String,
+        paragraphs: List<String>,
+        existingEntities: List<WikiEntry> = emptyList(),
+    ): String {
         val manuscript = paragraphs.joinToString("\n")
+        val existingBlock = if (existingEntities.isEmpty()) {
+            ""
+        } else {
+            buildString {
+                appendLine()
+                appendLine("이전 화에 이미 등장한 엔티티 목록 (이번 화에도 다시 등장하면 아래 id와 name을 그대로 재사용할 것. 새로운 id를 만들지 말 것):")
+                existingEntities.forEach { entry ->
+                    appendLine("- id:${entry.id} type:${entry.type.toSchemaType()} name:${entry.name}")
+                }
+            }
+        }
         return """
             <|think|>
             당신은 소설 원고를 분석해서 위키 데이터를 추출하는 어시스턴트입니다.
@@ -27,7 +45,7 @@ object IngestSchema {
             - 노드의 좌표(x, y) 같은 위치 정보는 만들지 않는다. 이 프롬프트가 다루는 범위가 아니다.
             - 어떤 엔티티가 다른 엔티티와 연결되어 있는지 여부(고아/미연결 판정)를 스스로 판단해서 표시하지 않는다. 관계(relations)만 사실대로 나열하면 된다.
             - 최종 출력은 아래 스키마에 맞는 JSON 하나뿐이어야 한다. JSON 앞뒤로 설명, 인사말, 마크다운 코드펜스 등 어떤 텍스트도 남기지 않는다.
-
+            $existingBlock
             출력 JSON 스키마:
             {
               "chapter_summary": "이 화의 3~4문장 요약",
@@ -45,5 +63,13 @@ object IngestSchema {
 
             위 원고를 분석해서 위 스키마에 맞는 JSON만 출력하라.
         """.trimIndent()
+    }
+
+    private fun SmBadgeType.toSchemaType(): String = when (this) {
+        SmBadgeType.Character -> "character"
+        SmBadgeType.Place -> "place"
+        SmBadgeType.Item -> "item"
+        SmBadgeType.Event -> "event"
+        else -> "character"
     }
 }

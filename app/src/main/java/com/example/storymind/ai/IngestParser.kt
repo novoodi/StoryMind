@@ -23,8 +23,8 @@ data class ParsedIngest(
 /**
  * Turns the raw string returned by the on-device engine into structured ingest data:
  * strips the Gemma thinking-mode `<|channel>thought ... <channel|>` block, extracts the
- * JSON object that follows, repairs the trailing commas Gemma tends to emit, then parses it.
- * Any failure falls back to an empty result instead of throwing.
+ * JSON object that follows, repairs the trailing/missing commas Gemma tends to emit, then
+ * parses it. Any failure falls back to an empty result instead of throwing.
  */
 object IngestParser {
 
@@ -32,6 +32,14 @@ object IngestParser {
 
     private val THOUGHT_BLOCK_REGEX = Regex("<\\|channel>thought.*?<channel\\|>", RegexOption.DOT_MATCHES_ALL)
     private val TRAILING_COMMA_REGEX = Regex(",\\s*([}\\]])")
+
+    /**
+     * Matches the gap between one JSON value/token ending and the next value/object/array
+     * starting with no comma in between, e.g. `"꿈 기록부"\n      "type"` — a comma omission
+     * Gemma occasionally makes between sibling object members or array elements.
+     */
+    private val MISSING_COMMA_REGEX = Regex("(\"|\\}|\\]|true|false|null|\\d)(\\s+)(?=\"|\\{|\\[)")
+
     private val EMPTY = ParsedIngest(chapterSummary = "", entities = emptyList(), relations = emptyList())
 
     fun parse(raw: String): ParsedIngest {
@@ -45,7 +53,7 @@ object IngestParser {
         }
 
         return try {
-            JSONObject(stripTrailingCommas(jsonText)).toParsedIngest()
+            JSONObject(stripTrailingCommas(insertMissingCommas(jsonText))).toParsedIngest()
         } catch (e: JSONException) {
             Log.w(TAG, "Failed to parse ingest JSON, falling back to empty result", e)
             EMPTY
@@ -58,6 +66,9 @@ object IngestParser {
         if (start == -1 || end == -1 || end < start) return null
         return text.substring(start, end + 1)
     }
+
+    private fun insertMissingCommas(json: String): String =
+        json.replace(MISSING_COMMA_REGEX, "$1,$2")
 
     private fun stripTrailingCommas(json: String): String {
         var previous: String

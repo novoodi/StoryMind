@@ -1,5 +1,7 @@
 package com.example.storymind.ai
 
+import com.example.storymind.data.WikiEntry
+import com.example.storymind.ui.components.SmBadgeType
 import kotlinx.coroutines.runBlocking
 import org.junit.Assert.assertEquals
 import org.junit.Assert.assertTrue
@@ -53,6 +55,40 @@ class IngestServiceTest {
         )
 
         assertEquals(setOf("stranger"), result.orphanIds)
+    }
+
+    @Test
+    fun `ingest reuses an existing wiki entry's id when the model mints a new one for the same name`() = runBlocking {
+        val rawWithFreshId = """
+            {
+              "chapter_summary": "율과 진성이 다시 만난다.",
+              "entities": [
+                {"id":"yul_2","type":"character","name":"율","desc":"업데이트된 설명"},
+                {"id":"jinseong_new","type":"character","name":"진성","desc":"새 화의 진성"}
+              ],
+              "relations": [
+                {"from":"yul_2","to":"jinseong_new"}
+              ]
+            }
+        """.trimIndent()
+        val service = IngestService(engine = { rawWithFreshId })
+        val existingWiki = listOf(
+            WikiEntry("yul", SmBadgeType.Character, "율", "1장 설명", "1장"),
+            WikiEntry("jinseong", SmBadgeType.Character, "진성", "1장 설명", "1장"),
+        )
+
+        val result = service.ingest(
+            chapterLabel = "2장",
+            title = "2장",
+            paragraphs = listOf("..."),
+            existingWiki = existingWiki,
+        )
+
+        assertEquals(setOf("yul", "jinseong"), result.wikiEntries.map { it.id }.toSet())
+        assertEquals(1, result.edges.size)
+        assertEquals("yul", result.edges[0].from)
+        assertEquals("jinseong", result.edges[0].to)
+        assertTrue(result.orphanIds.isEmpty())
     }
 
     @Test
