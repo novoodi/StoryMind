@@ -1,9 +1,14 @@
 package com.example.storymind.ai
 
-import android.util.Log
 import com.example.storymind.ui.components.SmBadgeType
-import org.json.JSONException
-import org.json.JSONObject
+import kotlinx.serialization.Serializable
+import kotlinx.serialization.SerializationException
+import kotlinx.serialization.json.Json
+import kotlinx.serialization.json.JsonArray
+import kotlinx.serialization.json.JsonObject
+import kotlinx.serialization.json.JsonPrimitive
+import kotlinx.serialization.json.contentOrNull
+import kotlinx.serialization.json.decodeFromJsonElement
 
 data class ParsedEntity(
     val id: String,
@@ -62,9 +67,9 @@ object IngestParser {
 
     /**
      * Matches a doubled `{{` — a decoding stutter where Gemma repeats the object-open token
-     * before an entity/relation, e.g. `{\n  {\n  "id": "김진성", ...`. Left alone this makes
-     * org.json read the inner object as an attempted (non-string) key and throw "Names must be
-     * strings". Since these objects never nest, collapsing to a single `{` is always safe.
+     * before an entity/relation, e.g. `{\n  {\n  "id": "김진성", ...`. Left alone, the inner `{`
+     * is read as an attempted object key where a string is expected, which no JSON parser accepts.
+     * Since these objects never nest, collapsing to a single `{` is always safe.
      * Must run before [DOUBLE_CLOSE_BRACE_REGEX]: Gemma sometimes emits a matching doubled `}}`
      * for the same stray open (`{ { .. } }`), which only becomes a lone trailing double-close
      * once this pass removes the extra open.
@@ -83,6 +88,19 @@ object IngestParser {
 
     private val EMPTY = ParsedIngest(chapterSummary = "", entities = emptyList(), relations = emptyList())
 
+    /**
+     * `isLenient` tolerates loosely-typed/unquoted primitives Gemma occasionally emits;
+     * `ignoreUnknownKeys` (exercised when decoding individual entity/relation objects — see
+     * [decodeEntityOrNull]/[decodeRelationOrNull]) tolerates extra fields beyond [IngestSchema]'s
+     * contract. Neither substitutes for the regex repairs above: those fix outright grammar
+     * violations (missing commas/keys, duplicated braces) that no JSON leniency mode treats as
+     * valid input, so none of them became removable when this parser moved off org.json.
+     */
+    private val json = Json {
+        isLenient = true
+        ignoreUnknownKeys = true
+    }
+
     fun parse(raw: String): ParsedIngest = parseOrNull(raw) ?: EMPTY
 
     /**
@@ -93,13 +111,13 @@ object IngestParser {
      */
     fun parseOrNull(raw: String): ParsedIngest? {
         THOUGHT_BLOCK_REGEX.find(raw)?.let {
-            Log.d(TAG, "Stripped thought block: ${it.value.length} chars (raw total ${raw.length} chars)")
+            ingestLogger.d(TAG, "Stripped thought block: ${it.value.length} chars (raw total ${raw.length} chars)")
         }
         val withoutThought = raw.replace(THOUGHT_BLOCK_REGEX, "")
 
         val jsonText = extractJsonBlock(withoutThought)
         if (jsonText == null) {
-            Log.w(TAG, "No JSON object found in model output: $raw")
+            ingestLogger.w(TAG, "No JSON object found in model output: $raw")
             return null
         }
 
@@ -111,10 +129,12 @@ object IngestParser {
                     )
                 )
             )
-            Log.d(TAG, "parse() repaired JSON: $repaired")
-            JSONObject(repaired).toParsedIngest()
-        } catch (e: JSONException) {
-            Log.w(TAG, "Failed to parse ingest JSON", e)
+            ingestLogger.d(TAG, "parse() repaired JSON: $repaired")
+            val root = json.parseToJsonElement(repaired) as? JsonObject
+                ?: throw SerializationException("Top-level JSON element is not an object: $repaired")
+            root.toParsedIngest()
+        } catch (e: SerializationException) {
+            ingestLogger.w(TAG, "Failed to parse ingest JSON", e)
             null
         }
     }
@@ -155,41 +175,76 @@ object IngestParser {
         return current
     }
 
-    private fun JSONObject.toParsedIngest(): ParsedIngest {
-        val summary = optString("chapter_summary", "")
+    /** Wire shape for one entities[]/relations[] element. All fields nullable-with-null-default so a
+     * missing key and an explicit JSON `null` behave identically — matching org.json's optString,
+     * which historically backed this parser and treated both the same way. */
+    @Serializable
+    private data class GemmaEntity(
+        val id: String? = null,
+        val type: String? = null,
+        val name: String? = null,
+        val desc: String? = null,
+    )
+
+    @Serializable
+    private data class GemmaRelation(
+        val from: String? = null,
+        val to: String? = null,
+    )
+
+    private fun JsonObject.toParsedIngest(): ParsedIngest {
+        val summary = optString("chapter_summary") ?: ""
 
         val entities = mutableListOf<ParsedEntity>()
-        optJSONArray("entities")?.let { array ->
-            for (i in 0 until array.length()) {
-                val entity = array.optJSONObject(i) ?: continue
-                val id = entity.optString("id").takeIf { it.isNotBlank() } ?: continue
-                val rawType = entity.optString("type")
-                val type = mapType(rawType)
-                if (type == null) {
-                    Log.w(TAG, "Skipping entity '$id' with unknown type '$rawType'")
-                    continue
-                }
-                entities += ParsedEntity(
-                    id = id,
-                    type = type,
-                    name = entity.optString("name", id),
-                    desc = entity.optString("desc", ""),
-                )
+        (this["entities"] as? JsonArray)?.forEach { element ->
+            val entityObject = element as? JsonObject ?: return@forEach
+            val entity = decodeEntityOrNull(entityObject) ?: return@forEach
+            val id = entity.id.orEmpty().takeIf { it.isNotBlank() } ?: return@forEach
+            val rawType = entity.type.orEmpty()
+            val type = mapType(rawType)
+            if (type == null) {
+                ingestLogger.w(TAG, "Skipping entity '$id' with unknown type '$rawType'")
+                return@forEach
             }
+            entities += ParsedEntity(
+                id = id,
+                type = type,
+                name = entity.name ?: id,
+                desc = entity.desc.orEmpty(),
+            )
         }
 
         val relations = mutableListOf<ParsedRelation>()
-        optJSONArray("relations")?.let { array ->
-            for (i in 0 until array.length()) {
-                val relation = array.optJSONObject(i) ?: continue
-                val from = relation.optString("from").takeIf { it.isNotBlank() } ?: continue
-                val to = relation.optString("to").takeIf { it.isNotBlank() } ?: continue
-                relations += ParsedRelation(from, to)
-            }
+        (this["relations"] as? JsonArray)?.forEach { element ->
+            val relationObject = element as? JsonObject ?: return@forEach
+            val relation = decodeRelationOrNull(relationObject) ?: return@forEach
+            val from = relation.from.orEmpty().takeIf { it.isNotBlank() } ?: return@forEach
+            val to = relation.to.orEmpty().takeIf { it.isNotBlank() } ?: return@forEach
+            relations += ParsedRelation(from, to)
         }
 
         return ParsedIngest(summary, entities, relations)
     }
+
+    /** Non-object array elements are skipped by the `as? JsonObject` cast above before this runs;
+     * this catches the narrower case of an object that doesn't decode into [GemmaEntity] at all
+     * (mirrors org.json's `optJSONObject(i) ?: continue` never throwing on a bad element). */
+    private fun decodeEntityOrNull(entityObject: JsonObject): GemmaEntity? = try {
+        json.decodeFromJsonElement<GemmaEntity>(entityObject)
+    } catch (e: SerializationException) {
+        ingestLogger.w(TAG, "Skipping malformed entity object: $entityObject", e)
+        null
+    }
+
+    private fun decodeRelationOrNull(relationObject: JsonObject): GemmaRelation? = try {
+        json.decodeFromJsonElement<GemmaRelation>(relationObject)
+    } catch (e: SerializationException) {
+        ingestLogger.w(TAG, "Skipping malformed relation object: $relationObject", e)
+        null
+    }
+
+    private fun JsonObject.optString(key: String): String? =
+        (this[key] as? JsonPrimitive)?.contentOrNull
 
     private fun mapType(raw: String): SmBadgeType? = when (raw.trim().lowercase()) {
         "character" -> SmBadgeType.Character

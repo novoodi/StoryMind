@@ -1,6 +1,5 @@
 package com.example.storymind.ai
 
-import android.util.Log
 import com.example.storymind.data.GraphEdge
 import com.example.storymind.data.GraphNode
 import com.example.storymind.data.WikiEntry
@@ -112,7 +111,7 @@ class IngestService(private val engine: OnDeviceTextEngine) {
             raw = engine.generate(prompt)
             IngestParser.parseOrNull(raw)?.let { return it }
             val attemptsLeft = MAX_ATTEMPTS - attempt - 1
-            Log.w(TAG, "Ingest JSON parse failed (attempt ${attempt + 1}/$MAX_ATTEMPTS), $attemptsLeft retries left")
+            ingestLogger.w(TAG, "Ingest JSON parse failed (attempt ${attempt + 1}/$MAX_ATTEMPTS), $attemptsLeft retries left")
         }
         return IngestParser.parse(raw)
     }

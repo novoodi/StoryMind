@@ -31,6 +31,30 @@ class IngestParserTest {
     }
 
     @Test
+    fun `strips a markdown json code fence around an otherwise valid JSON object`() {
+        // On-device evidence (docs/constrained-decoding-spike.md, SM-S928N, 2026-07-02): Gemma
+        // wraps its JSON response in a ```json fence even when the prompt explicitly forbids it.
+        val raw = """
+            ```json
+            {
+              "chapter_summary": "지우와 민준이 카페에서 처음 만났다.",
+              "entities": [
+                {"id":"jiwoo","type":"character","name":"김지우","desc":"주인공"}
+              ],
+              "relations": []
+            }
+            ```
+        """.trimIndent()
+
+        val result = IngestParser.parse(raw)
+
+        assertEquals("지우와 민준이 카페에서 처음 만났다.", result.chapterSummary)
+        assertEquals(1, result.entities.size)
+        assertEquals("jiwoo", result.entities[0].id)
+        assertEquals(SmBadgeType.Character, result.entities[0].type)
+    }
+
+    @Test
     fun `cleans trailing commas before parsing`() {
         val raw = """
             {

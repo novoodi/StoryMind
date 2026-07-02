@@ -7,6 +7,7 @@ import androidx.lifecycle.viewModelScope
 import com.example.storymind.ai.ChapterProgress
 import com.example.storymind.ai.IngestService
 import com.example.storymind.ai.OnDeviceEngine
+import com.example.storymind.ai.ingestLogger
 import com.example.storymind.ai.merge
 import com.example.storymind.data.GraphEdge
 import com.example.storymind.data.GraphNode
@@ -14,6 +15,7 @@ import com.example.storymind.data.StoryRepository
 import com.example.storymind.data.WikiEntry
 import com.example.storymind.data.db.ChapterEntity
 import com.example.storymind.data.db.StoryDatabase
+import com.example.storymind.platform.AndroidIngestLogger
 import com.example.storymind.ui.components.SmAiStatus
 import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.flow.StateFlow
@@ -47,6 +49,12 @@ data class StoryUiState(
  * type a chapter -> save -> ingest -> wiki/graph accumulate -> next chapter, surviving process death.
  */
 class StoryViewModel(application: Application) : AndroidViewModel(application) {
+
+    init {
+        // Wires ai/'s platform-neutral logging seam to android.util.Log before anything in that
+        // package can log; ai/ itself stays Android-free (CLAUDE.md rule 4).
+        ingestLogger = AndroidIngestLogger
+    }
 
     private val engine = OnDeviceEngine(application)
     private val ingestService = IngestService(engine::generate)
