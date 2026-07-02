@@ -37,6 +37,7 @@ import androidx.compose.ui.graphics.SolidColor
 import com.example.storymind.ui.components.SmAiStatus
 import com.example.storymind.ui.components.SmButton
 import com.example.storymind.ui.components.SmButtonSize
+import com.example.storymind.ui.components.SmButtonVariant
 import com.example.storymind.ui.components.SmIconButton
 import com.example.storymind.ui.components.SmStatusBadge
 import com.example.storymind.ui.components.SmToolbar
@@ -65,6 +66,9 @@ fun EditorScreen(
     onSave: () -> Unit,
     onNextChapter: () -> Unit,
     onWikiOpen: () -> Unit,
+    canLint: Boolean,
+    lintRunning: Boolean,
+    onLint: () -> Unit,
     modifier: Modifier = Modifier,
 ) {
     Column(modifier = modifier.fillMaxSize()) {
@@ -101,6 +105,9 @@ fun EditorScreen(
             justSaved = canAdvance,
             onSave = onSave,
             onNextChapter = onNextChapter,
+            canLint = canLint,
+            lintRunning = lintRunning,
+            onLint = onLint,
         )
     }
 }
@@ -281,6 +288,9 @@ private fun EditorFormatBar(
     justSaved: Boolean,
     onSave: () -> Unit,
     onNextChapter: () -> Unit,
+    canLint: Boolean,
+    lintRunning: Boolean,
+    onLint: () -> Unit,
 ) {
     val borderColor = SmColors.borderDefault
     Row(
@@ -311,6 +321,17 @@ private fun EditorFormatBar(
             modifier = Modifier.padding(end = 12.dp),
         )
         if (justSaved) {
+            if (canLint) {
+                SmButton(
+                    text = "설정 검사",
+                    onClick = onLint,
+                    variant = SmButtonVariant.Secondary,
+                    size = SmButtonSize.Sm,
+                    enabled = !lintRunning,
+                    loading = lintRunning,
+                    modifier = Modifier.padding(end = 6.dp),
+                )
+            }
             SmButton(
                 text = "다음 화 쓰기",
                 onClick = onNextChapter,

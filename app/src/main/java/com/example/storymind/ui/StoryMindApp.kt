@@ -16,6 +16,7 @@ import androidx.compose.runtime.setValue
 import androidx.compose.ui.Modifier
 import androidx.lifecycle.viewmodel.compose.viewModel
 import com.example.storymind.ui.components.SmBottomSheet
+import com.example.storymind.ui.components.SmLintResultSheet
 import com.example.storymind.ui.components.SmNavBar
 import com.example.storymind.ui.components.SmSheetAction
 import com.example.storymind.ui.components.SmTab
@@ -38,16 +39,19 @@ import com.example.storymind.ui.screens.WikiScreen
 fun StoryMindApp(modifier: Modifier = Modifier) {
     val viewModel: StoryViewModel = viewModel()
     val uiState by viewModel.uiState.collectAsState()
+    val lintState by viewModel.lintState.collectAsState()
 
     var tab by remember { mutableStateOf(SmTab.Editor) }
     var warningOpen by remember { mutableStateOf(false) }
     var drawerOpen by remember { mutableStateOf(false) }
+    var lintSheetOpen by remember { mutableStateOf(false) }
     var shakeTrigger by remember { mutableIntStateOf(0) }
 
     LaunchedEffect(tab) {
         if (tab != SmTab.Editor) {
             warningOpen = false
             drawerOpen = false
+            lintSheetOpen = false
         }
     }
 
@@ -67,6 +71,12 @@ fun StoryMindApp(modifier: Modifier = Modifier) {
                     onSave = viewModel::saveAndIngest,
                     onNextChapter = viewModel::startNextChapter,
                     onWikiOpen = { drawerOpen = true },
+                    canLint = uiState.lastSaveIngested,
+                    lintRunning = lintState is LintUiState.Running,
+                    onLint = {
+                        viewModel.lintCurrentChapter()
+                        lintSheetOpen = true
+                    },
                 )
                 SmTab.Brain -> BrainScreen(
                     nodes = uiState.graphNodes,
@@ -94,6 +104,12 @@ fun StoryMindApp(modifier: Modifier = Modifier) {
                     tab = SmTab.Wiki
                 },
                 secondaryAction = SmSheetAction("그냥 둘래요") { warningOpen = false },
+            )
+
+            SmLintResultSheet(
+                isOpen = lintSheetOpen,
+                onClose = { lintSheetOpen = false },
+                state = lintState,
             )
         }
         SmNavBar(active = tab, onChange = { tab = it }, modifier = Modifier.navigationBarsPadding())

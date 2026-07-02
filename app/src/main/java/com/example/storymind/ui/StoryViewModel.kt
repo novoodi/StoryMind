@@ -1,28 +1,27 @@
 package com.example.storymind.ui
 
 import android.app.Application
-import android.util.Log
 import androidx.lifecycle.AndroidViewModel
 import androidx.lifecycle.viewModelScope
-import com.example.storymind.ai.ChapterProgress
-import com.example.storymind.ai.IngestService
-import com.example.storymind.ai.OnDeviceEngine
-import com.example.storymind.ai.ingestLogger
-import com.example.storymind.ai.merge
+import androidx.work.WorkInfo
+import androidx.work.WorkManager
 import com.example.storymind.data.GraphEdge
 import com.example.storymind.data.GraphNode
 import com.example.storymind.data.StoryRepository
 import com.example.storymind.data.WikiEntry
 import com.example.storymind.data.db.ChapterEntity
 import com.example.storymind.data.db.StoryDatabase
-import com.example.storymind.platform.AndroidIngestLogger
+import com.example.storymind.platform.IngestEngineProvider
 import com.example.storymind.ui.components.SmAiStatus
+import com.example.storymind.work.IngestWorker
+import com.example.storymind.work.LintWorker
+import kotlinx.coroutines.ExperimentalCoroutinesApi
 import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.flow.StateFlow
+import kotlinx.coroutines.flow.filterNotNull
+import kotlinx.coroutines.flow.flatMapLatest
 import kotlinx.coroutines.flow.update
 import kotlinx.coroutines.launch
-
-private const val TAG = "StoryViewModel"
 
 data class StoryUiState(
     val previousChapters: List<ChapterEntity> = emptyList(),
@@ -45,32 +44,51 @@ data class StoryUiState(
 }
 
 /**
- * Owns the on-device engine, the ingest pipeline, and Room persistence for the writing flow:
- * type a chapter -> save -> ingest -> wiki/graph accumulate -> next chapter, surviving process death.
+ * Owns Room persistence and the editor's UI state for the writing flow: type a chapter -> save ->
+ * ingest -> wiki/graph accumulate -> next chapter, surviving process death.
+ *
+ * The ingest itself no longer runs here: saving commits the manuscript (`ingested = false`) and
+ * enqueues [IngestWorker], which survives this ViewModel — and the whole process — being torn
+ * down. This ViewModel only *observes* that work's [WorkInfo] to drive the status badge, and
+ * reloads the accumulated progress when a run succeeds. The engine is owned by
+ * [IngestEngineProvider] at app scope, which is why there is no `onCleared` releasing it anymore.
  */
 class StoryViewModel(application: Application) : AndroidViewModel(application) {
 
-    init {
-        // Wires ai/'s platform-neutral logging seam to android.util.Log before anything in that
-        // package can log; ai/ itself stays Android-free (CLAUDE.md rule 4).
-        ingestLogger = AndroidIngestLogger
-    }
+    private val repository = StoryRepository(StoryDatabase.get(application))
+    private val workManager = WorkManager.getInstance(application)
 
-    private val engine = OnDeviceEngine(application)
-    private val ingestService = IngestService(engine::generate)
-    private val repository = StoryRepository(StoryDatabase.get(application).storyDao())
+    /** Chapter whose unique ingest work this ViewModel watches: the last chapter saved this
+     * session, or (after a restart) the last chapter found in the DB — that's the only one whose
+     * worker can still be pending/running. */
+    private val watchedChapterIndex = MutableStateFlow<Int?>(null)
 
-    private var progress = ChapterProgress()
+    /** See [toAiStatus] — gates SUCCEEDED → Done so a finished work record persisted from a
+     * previous session doesn't resurrect the Done badge on cold start. */
+    private var sessionSawActiveWork = false
 
     private val _uiState = MutableStateFlow(StoryUiState())
     val uiState: StateFlow<StoryUiState> = _uiState
 
+    /** Chapter whose lint work this ViewModel watches. Unlike [watchedChapterIndex], this stays
+     * null until [lintCurrentChapter] is actually called — lint is on-demand, so there is no
+     * "resume watching after restart" case to handle and no stale-session gate to write (see
+     * [toLintUiState]'s KDoc). */
+    private val watchedLintChapterIndex = MutableStateFlow<Int?>(null)
+
+    private val _lintState = MutableStateFlow<LintUiState>(LintUiState.Idle)
+    val lintState: StateFlow<LintUiState> = _lintState
+
     init {
         viewModelScope.launch {
             val savedChapters = repository.loadChapters()
-            progress = repository.loadProgress()
-            val modelAvailable = engine.isModelAvailable
+            val progress = repository.loadProgress()
+            val modelAvailable = IngestEngineProvider.isModelAvailable(getApplication())
 
+            // A last chapter with ingested=false is reopened as the working draft. That was true
+            // before the worker existed too (a failed ingest leaves the same state); with async
+            // ingest the window is just longer, and if the worker finishes later the flag flips
+            // to true so the next launch advances past it.
             val last = savedChapters.lastOrNull()
             val (previous, draftIndex, draftBody) = when {
                 last == null -> Triple(emptyList<ChapterEntity>(), 0, "")
@@ -91,6 +109,63 @@ class StoryViewModel(application: Application) : AndroidViewModel(application) {
                     isLoaded = true,
                 )
             }
+            watchedChapterIndex.value = last?.chapterIndex
+        }
+        observeIngestWork()
+        observeLintWork()
+    }
+
+    @OptIn(ExperimentalCoroutinesApi::class)
+    private fun observeIngestWork() {
+        viewModelScope.launch {
+            watchedChapterIndex
+                .filterNotNull()
+                .flatMapLatest { index ->
+                    workManager.getWorkInfosForUniqueWorkFlow(IngestWorker.uniqueNameFor(index))
+                }
+                .collect { infos -> onIngestWorkChanged(infos.firstOrNull()?.state) }
+        }
+    }
+
+    private suspend fun onIngestWorkChanged(state: WorkInfo.State?) {
+        if (state != null && !state.isFinished) sessionSawActiveWork = true
+        val status = state.toAiStatus(sessionSawActiveWork)
+        if (status == SmAiStatus.Done) {
+            // The worker committed a new progress snapshot; re-read it so wiki/graph reflect the
+            // chapter that just finished ingesting.
+            val progress = repository.loadProgress()
+            _uiState.update {
+                it.copy(
+                    wikiEntries = progress.wikiEntries,
+                    graphNodes = progress.nodes,
+                    graphEdges = progress.edges,
+                    orphanIds = progress.orphanIds,
+                    aiStatus = status,
+                    lastSaveIngested = true,
+                )
+            }
+        } else {
+            _uiState.update { it.copy(aiStatus = status) }
+        }
+    }
+
+    @OptIn(ExperimentalCoroutinesApi::class)
+    private fun observeLintWork() {
+        viewModelScope.launch {
+            watchedLintChapterIndex
+                .filterNotNull()
+                .flatMapLatest { index ->
+                    workManager.getWorkInfosForUniqueWorkFlow(LintWorker.uniqueNameFor(index))
+                }
+                .collect { infos -> onLintWorkChanged(infos.firstOrNull()) }
+        }
+    }
+
+    private fun onLintWorkChanged(info: WorkInfo?) {
+        val wikiById = _uiState.value.wikiEntries.associateBy { it.id }
+        val findingsJson = info?.outputData?.getString(LintWorker.KEY_FINDINGS_JSON)
+        _lintState.value = info?.state.toLintUiState(findingsJson) { entityId ->
+            wikiById[entityId]?.name ?: entityId
         }
     }
 
@@ -98,6 +173,11 @@ class StoryViewModel(application: Application) : AndroidViewModel(application) {
         _uiState.update { it.copy(currentBody = body, canAdvance = false) }
     }
 
+    /**
+     * Persists the manuscript first — that alone unlocks the next chapter (rule 3) — then hands
+     * the ingest to [IngestWorker]. From here on the badge is driven by [onIngestWorkChanged];
+     * the eager Analyzing update below only bridges the gap until WorkManager's first emission.
+     */
     fun saveAndIngest() {
         val state = _uiState.value
         val body = state.currentBody
@@ -110,45 +190,48 @@ class StoryViewModel(application: Application) : AndroidViewModel(application) {
             repository.saveChapter(chapterIndex, label, title = null, body = body, ingested = false)
             _uiState.update { it.copy(canAdvance = true, lastSaveIngested = false) }
 
-            if (!engine.isModelAvailable) {
+            // Any prior lint result belonged to the manuscript that just got overwritten — a
+            // stale finding for the old body would misread as a verdict on the new one.
+            _lintState.value = LintUiState.Idle
+            watchedLintChapterIndex.value = null
+
+            if (!IngestEngineProvider.isModelAvailable(getApplication())) {
                 _uiState.update { it.copy(aiStatus = SmAiStatus.Idle) }
                 return@launch
             }
 
+            sessionSawActiveWork = true
             _uiState.update { it.copy(aiStatus = SmAiStatus.Analyzing) }
-            try {
-                engine.initialize()
-                val paragraphs = body.split(Regex("\n+")).filter { it.isNotBlank() }
-                val result = ingestService.ingest(
-                    chapterLabel = label,
-                    title = label,
-                    paragraphs = paragraphs,
-                    existingWiki = progress.wikiEntries,
-                )
-                progress = progress.merge(result)
-                repository.saveProgress(progress)
-                repository.saveChapter(chapterIndex, label, title = null, body = body, ingested = true)
-
-                _uiState.update {
-                    it.copy(
-                        wikiEntries = progress.wikiEntries,
-                        graphNodes = progress.nodes,
-                        graphEdges = progress.edges,
-                        orphanIds = progress.orphanIds,
-                        aiStatus = SmAiStatus.Done,
-                        lastSaveIngested = true,
-                    )
-                }
-            } catch (e: Exception) {
-                Log.w(TAG, "Ingest failed, manuscript is saved but wiki/graph unchanged", e)
-                _uiState.update { it.copy(aiStatus = SmAiStatus.Idle) }
-            }
+            IngestWorker.enqueue(getApplication(), chapterIndex)
+            watchedChapterIndex.value = chapterIndex
         }
+    }
+
+    /**
+     * On-demand setting-consistency check for the current chapter (a "설정 검사" button, not
+     * part of the save/advance flow — CLAUDE.md rule 3 doesn't apply here since nothing about
+     * advancing depends on this). Only meaningful once the chapter is ingested: lint reads
+     * candidates out of the accumulated wiki, which has nothing for a chapter that hasn't
+     * finished ingesting yet. [EditorScreen] gates the button on the same
+     * [StoryUiState.lastSaveIngested] flag this checks.
+     */
+    fun lintCurrentChapter() {
+        val state = _uiState.value
+        if (!state.lastSaveIngested) return
+
+        val chapterIndex = state.currentChapterIndex
+        _lintState.value = LintUiState.Running
+        LintWorker.enqueue(getApplication(), chapterIndex)
+        watchedLintChapterIndex.value = chapterIndex
     }
 
     fun startNextChapter() {
         val state = _uiState.value
         if (!state.canAdvance) return
+
+        // The lint result (if any) belongs to the chapter being left behind.
+        _lintState.value = LintUiState.Idle
+        watchedLintChapterIndex.value = null
 
         val justSaved = ChapterEntity(
             chapterIndex = state.currentChapterIndex,
@@ -167,11 +250,5 @@ class StoryViewModel(application: Application) : AndroidViewModel(application) {
                 lastSaveIngested = false,
             )
         }
-    }
-
-    override fun onCleared() {
-        // viewModelScope is already cancelled by the time onCleared runs, so release()
-        // (a suspend fun closing the native engine) needs its own blocking call here.
-        kotlinx.coroutines.runBlocking { engine.release() }
     }
 }
