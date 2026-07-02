@@ -18,6 +18,14 @@ data class ChapterEntity(
     val title: String?,
     val body: String,
     val ingested: Boolean,
+    /** Which ingest engine produced this chapter's wiki/graph data ("local" on-device Gemma today,
+     * "cloud" reserved for a future path), or null for drafts and chapters ingested before
+     * provenance tracking existed (schema v1). */
+    val ingestEngine: String? = null,
+    /** [com.example.storymind.ai.IngestSchema.PROMPT_VERSION] at ingest time, so a later prompt
+     * change can be detected and old chapters re-ingested if desired; null under the same
+     * conditions as [ingestEngine]. */
+    val ingestPromptVersion: Int? = null,
 )
 
 @Entity(tableName = "wiki_entries")

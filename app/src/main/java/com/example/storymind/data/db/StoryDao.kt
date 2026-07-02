@@ -19,6 +19,19 @@ interface StoryDao {
     @Query("SELECT * FROM chapters ORDER BY chapterIndex ASC")
     suspend fun loadChapters(): List<ChapterEntity>
 
+    @Query("SELECT * FROM chapters WHERE chapterIndex = :chapterIndex")
+    suspend fun loadChapter(chapterIndex: Int): ChapterEntity?
+
+    /**
+     * Flips only the ingest flag/provenance columns instead of upserting a whole row, so the
+     * manuscript body (the immutable source of truth) is never rewritten by the ingest path.
+     */
+    @Query(
+        "UPDATE chapters SET ingested = 1, ingestEngine = :engine, ingestPromptVersion = :promptVersion " +
+            "WHERE chapterIndex = :chapterIndex"
+    )
+    suspend fun markIngested(chapterIndex: Int, engine: String, promptVersion: Int)
+
     @Query("DELETE FROM wiki_entries")
     suspend fun clearWikiEntries()
 

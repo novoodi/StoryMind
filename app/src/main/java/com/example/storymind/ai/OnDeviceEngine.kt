@@ -11,6 +11,11 @@ import kotlinx.coroutines.sync.Mutex
 import kotlinx.coroutines.sync.withLock
 import kotlinx.coroutines.withContext
 
+/** Which backend the active [Engine] initialized with — surfaced so callers (e.g.
+ * [com.example.storymind.work.IngestWorker]'s timing log) can tell a slow generation apart from
+ * a CPU-fallback generation instead of just a slow one. */
+enum class EngineBackend { GPU, CPU }
+
 /**
  * Thin wrapper around the LiteRT-LM engine: raw string prompt in, raw string response out.
  * Prompt formatting, thinking-mode tokens, and response parsing belong to the caller (Ingest layer).
@@ -23,11 +28,18 @@ class OnDeviceEngine(context: Context) {
     @Volatile
     private var engine: Engine? = null
 
+    @Volatile
+    private var backend: EngineBackend? = null
+
     val modelPath: String
         get() = File(appContext.getExternalFilesDir(MODELS_DIR_NAME), MODEL_FILENAME).absolutePath
 
     val isModelAvailable: Boolean
         get() = File(modelPath).exists()
+
+    /** Null before the first successful [initialize] and after [release]. */
+    val activeBackend: EngineBackend?
+        get() = backend
 
     suspend fun initialize() = withContext(Dispatchers.IO) {
         mutex.withLock {
@@ -41,6 +53,7 @@ class OnDeviceEngine(context: Context) {
             try {
                 gpuEngine.initialize()
                 engine = gpuEngine
+                backend = EngineBackend.GPU
                 Log.i(TAG, "Initialized LiteRT-LM engine with GPU backend")
                 return@withLock
             } catch (e: Exception) {
@@ -58,9 +71,11 @@ class OnDeviceEngine(context: Context) {
             try {
                 cpuEngine.initialize()
                 engine = cpuEngine
+                backend = EngineBackend.CPU
                 Log.i(TAG, "Initialized LiteRT-LM engine with CPU backend")
             } catch (e: Exception) {
                 engine = null
+                backend = null
                 throw e
             }
         }
@@ -108,6 +123,7 @@ class OnDeviceEngine(context: Context) {
         mutex.withLock {
             engine?.close()
             engine = null
+            backend = null
         }
     }
 

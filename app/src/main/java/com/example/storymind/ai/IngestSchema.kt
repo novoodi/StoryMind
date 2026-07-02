@@ -13,6 +13,30 @@ import com.example.storymind.ui.components.SmBadgeType
  */
 object IngestSchema {
 
+    /** Bumped whenever [buildIngestPrompt]'s instructions change meaningfully, so ingest results
+     * stored via [com.example.storymind.data.db.ChapterEntity.ingestPromptVersion] can be told
+     * apart from output produced under an older prompt.
+     *
+     * v1 -> v2: not a wording change — a `trimIndent()` bug fix. Before the fix, interpolating
+     * the multi-line `existingBlock`/`manuscript` into the template before calling `trimIndent()`
+     * dragged its computed minimum indentation to 0 for the whole string (see [IngestSchemaTest]
+     * for the regression coverage, not `docs/constrained-decoding-spike.md` — that spike is about
+     * a separate constrained-decoding investigation), so every instruction line still carried its
+     * 12-space source indent whenever a chapter had `existingEntities` or more than one paragraph
+     * — i.e. essentially every chapter past the first. Chapters stamped with v1 were ingested from
+     * that indentation-polluted prompt, not today's clean one. */
+    const val PROMPT_VERSION: Int = 2
+
+    /** Placeholder tokens (plain text, not `$`-based) inserted into the template before
+     * [String.trimIndent] runs and swapped for the real multi-line blocks after. Interpolating
+     * [existingBlock]/[manuscript] directly into the triple-quoted literal before trimming — the
+     * previous approach — let their own zero-indent lines drag trimIndent's computed minimum
+     * indentation down to 0 for the *entire* string, so the template's own indentation never got
+     * stripped. Single-line interpolations like `chapterTitle` don't have this problem, since
+     * they can't introduce a new zero-indent line. */
+    private const val EXISTING_PLACEHOLDER = "%%EXISTING_BLOCK%%"
+    private const val MANUSCRIPT_PLACEHOLDER = "%%MANUSCRIPT%%"
+
     fun buildIngestPrompt(
         chapterTitle: String,
         paragraphs: List<String>,
@@ -30,7 +54,7 @@ object IngestSchema {
                 }
             }
         }
-        return """
+        val template = """
             당신은 소설 원고를 분석해서 위키 데이터를 추출하는 어시스턴트입니다.
 
             할 일:
@@ -46,7 +70,7 @@ object IngestSchema {
             - 어떤 엔티티가 다른 엔티티와 연결되어 있는지 여부(고아/미연결 판정)를 스스로 판단해서 표시하지 않는다. 관계(relations)만 사실대로 나열하면 된다.
             - 이 작업은 단순 추출이다. 분석 과정이나 생각 과정을 출력하지 말고, 추론 없이 곧바로 최종 JSON만 출력한다.
             - 최종 출력은 아래 스키마에 맞는 JSON 하나뿐이어야 한다. JSON 앞뒤로 설명, 인사말, 마크다운 코드펜스 등 어떤 텍스트도 남기지 않는다.
-            $existingBlock
+            $EXISTING_PLACEHOLDER
             출력 JSON 스키마 (모든 필드 필수, desc 생략 금지):
             {
               "chapter_summary": "이 화의 3~4문장 요약",
@@ -63,10 +87,14 @@ object IngestSchema {
 
             분석할 원고
             화 제목: $chapterTitle
-            $manuscript
+            $MANUSCRIPT_PLACEHOLDER
 
             위 원고를 분석해서 위 스키마에 맞는 JSON만 출력하라.
         """.trimIndent()
+
+        return template
+            .replace(EXISTING_PLACEHOLDER, existingBlock)
+            .replace(MANUSCRIPT_PLACEHOLDER, manuscript)
     }
 
     private fun SmBadgeType.toSchemaType(): String = when (this) {
