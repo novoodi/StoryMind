@@ -21,4 +21,5 @@ dependencyResolutionManagement {
 
 rootProject.name = "StoryMind"
 include(":app")
+include(":core")
  
