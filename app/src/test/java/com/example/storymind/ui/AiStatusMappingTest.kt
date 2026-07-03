@@ -30,10 +30,14 @@ class AiStatusMappingTest {
     }
 
     @Test
-    fun `failed and cancelled map to Idle, matching the quiet failure policy`() {
-        for (state in listOf(WorkInfo.State.FAILED, WorkInfo.State.CANCELLED)) {
-            assertEquals(SmAiStatus.Idle, state.toAiStatus(sessionSawActiveWork = false))
-            assertEquals(SmAiStatus.Idle, state.toAiStatus(sessionSawActiveWork = true))
-        }
+    fun `failed maps to Warning regardless of session history, so a retry stays visible after a restart`() {
+        assertEquals(SmAiStatus.Warning, WorkInfo.State.FAILED.toAiStatus(sessionSawActiveWork = false))
+        assertEquals(SmAiStatus.Warning, WorkInfo.State.FAILED.toAiStatus(sessionSawActiveWork = true))
+    }
+
+    @Test
+    fun `cancelled maps to Idle, matching a benign REPLACE by a newer save's worker`() {
+        assertEquals(SmAiStatus.Idle, WorkInfo.State.CANCELLED.toAiStatus(sessionSawActiveWork = false))
+        assertEquals(SmAiStatus.Idle, WorkInfo.State.CANCELLED.toAiStatus(sessionSawActiveWork = true))
     }
 }

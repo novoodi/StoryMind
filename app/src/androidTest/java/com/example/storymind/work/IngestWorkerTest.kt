@@ -100,6 +100,30 @@ class IngestWorkerTest {
     }
 
     @Test
+    fun parseFailure_returnsFailure_andLeavesChapterAndProgressUntouched() = runBlocking {
+        // Regression for the 2화 incident (2026-07): before IngestService.ingest() returned null
+        // on exhausted retries, this exact scenario (engine never throws, just never produces
+        // parseable JSON) committed an empty IngestResult and flipped ingested=true — the chapter
+        // showed "완료됐어요" with a wiki that never actually got its data. See IngestService's
+        // and IngestWorker's KDocs.
+        db.storyDao().upsertChapter(chapter(0, "원고 본문"))
+        var engineCalls = 0
+        IngestEngineProvider.textEngineOverride = OnDeviceTextEngine {
+            engineCalls++
+            "이건 JSON이 아니라 그냥 잡음입니다"
+        }
+
+        val result = buildWorker(0).doWork()
+
+        assertEquals(ListenableWorker.Result.failure(), result)
+        assertEquals(3, engineCalls) // IngestService.MAX_ATTEMPTS
+        val saved = db.storyDao().loadChapter(0)!!
+        assertFalse(saved.ingested)
+        assertEquals("원고 본문", saved.body)
+        assertTrue(db.storyDao().loadWikiEntries().isEmpty())
+    }
+
+    @Test
     fun bodyGuard_skipsCommit_whenChapterWasResavedDuringGeneration() = runBlocking {
         db.storyDao().upsertChapter(chapter(0, "원래 원고"))
         IngestEngineProvider.textEngineOverride = OnDeviceTextEngine {
@@ -117,6 +141,42 @@ class IngestWorkerTest {
         assertFalse(saved.ingested)
         assertEquals("수정된 원고", saved.body)
         assertTrue(db.storyDao().loadWikiEntries().isEmpty())
+    }
+
+    @Test
+    fun orderingGuard_defersChapter_whileALowerChapterIsStillPending() = runBlocking {
+        // Chapter 2 saved while chapter 1 is still un-ingested (mid-rebuild, or after chapter 1's
+        // ingest failed): ingesting 2 now would merge it on top of an accumulation missing 1,
+        // minting duplicate ids for anything chapter 1 establishes. The worker must fail without
+        // generating; the ReplayWorker resume path delivers both in order later.
+        db.storyDao().upsertChapter(chapter(0, "1화 원고"))
+        db.storyDao().upsertChapter(chapter(1, "2화 원고"))
+        var engineCalls = 0
+        IngestEngineProvider.textEngineOverride = OnDeviceTextEngine {
+            engineCalls++
+            FAKE_RESPONSE_CHAPTER_1
+        }
+
+        val result = buildWorker(1).doWork()
+
+        assertEquals(ListenableWorker.Result.failure(), result)
+        assertEquals(0, engineCalls)
+        assertFalse(db.storyDao().loadChapter(1)!!.ingested)
+        assertTrue(db.storyDao().loadWikiEntries().isEmpty())
+    }
+
+    @Test
+    fun orderingGuard_ignoresBlankLowerChapters() = runBlocking {
+        // A blank body can never ingest (saveAndIngest refuses it) and contributes no entities —
+        // treating it as pending would deadlock every later chapter forever.
+        db.storyDao().upsertChapter(chapter(0, ""))
+        db.storyDao().upsertChapter(chapter(1, "2화 원고"))
+        IngestEngineProvider.textEngineOverride = OnDeviceTextEngine { FAKE_RESPONSE_CHAPTER_1 }
+
+        val result = buildWorker(1).doWork()
+
+        assertEquals(ListenableWorker.Result.success(), result)
+        assertTrue(db.storyDao().loadChapter(1)!!.ingested)
     }
 
     @Test

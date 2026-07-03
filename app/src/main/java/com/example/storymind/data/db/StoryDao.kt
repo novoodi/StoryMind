@@ -32,6 +32,14 @@ interface StoryDao {
     )
     suspend fun markIngested(chapterIndex: Int, engine: String, promptVersion: Int)
 
+    /**
+     * [markIngested]'s inverse, across every chapter at once — the flag half of
+     * [com.example.storymind.data.StoryRepository.resetDerivedData]. Same column-targeted UPDATE
+     * rationale: bodies are never rewritten by anything on the ingest/replay path.
+     */
+    @Query("UPDATE chapters SET ingested = 0, ingestEngine = NULL, ingestPromptVersion = NULL")
+    suspend fun resetIngestProvenance()
+
     @Query("DELETE FROM wiki_entries")
     suspend fun clearWikiEntries()
 

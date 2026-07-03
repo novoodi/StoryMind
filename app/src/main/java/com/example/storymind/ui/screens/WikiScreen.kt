@@ -20,12 +20,17 @@ import com.example.storymind.ui.theme.SmColors
 
 /** Auto-generated setting-bible list — mirrors the prototype's WikiScreen. */
 @Composable
-fun WikiScreen(entries: List<WikiEntry>, modifier: Modifier = Modifier) {
+fun WikiScreen(
+    entries: List<WikiEntry>,
+    modifier: Modifier = Modifier,
+    rebuildBanner: (@Composable () -> Unit)? = null,
+) {
     Column(modifier = modifier.fillMaxSize().background(SmColors.surfaceBase)) {
         SmToolbar(
             title = "위키",
             right = { SmIconButton(icon = SmIcons.Search, onClick = {}) },
         )
+        rebuildBanner?.invoke()
         LazyColumn(
             modifier = Modifier.fillMaxSize(),
             contentPadding = PaddingValues(horizontal = 15.dp, vertical = 12.dp),

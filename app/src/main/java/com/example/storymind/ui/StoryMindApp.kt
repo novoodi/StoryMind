@@ -18,6 +18,7 @@ import androidx.lifecycle.viewmodel.compose.viewModel
 import com.example.storymind.ui.components.SmBottomSheet
 import com.example.storymind.ui.components.SmLintResultSheet
 import com.example.storymind.ui.components.SmNavBar
+import com.example.storymind.ui.components.SmRebuildBanner
 import com.example.storymind.ui.components.SmSheetAction
 import com.example.storymind.ui.components.SmTab
 import com.example.storymind.ui.components.SmWikiDrawer
@@ -40,11 +41,13 @@ fun StoryMindApp(modifier: Modifier = Modifier) {
     val viewModel: StoryViewModel = viewModel()
     val uiState by viewModel.uiState.collectAsState()
     val lintState by viewModel.lintState.collectAsState()
+    val rebuildState by viewModel.rebuildState.collectAsState()
 
     var tab by remember { mutableStateOf(SmTab.Editor) }
     var warningOpen by remember { mutableStateOf(false) }
     var drawerOpen by remember { mutableStateOf(false) }
     var lintSheetOpen by remember { mutableStateOf(false) }
+    var rebuildConfirmOpen by remember { mutableStateOf(false) }
     var shakeTrigger by remember { mutableIntStateOf(0) }
 
     LaunchedEffect(tab) {
@@ -53,6 +56,18 @@ fun StoryMindApp(modifier: Modifier = Modifier) {
             drawerOpen = false
             lintSheetOpen = false
         }
+        if (tab != SmTab.Settings) {
+            rebuildConfirmOpen = false
+        }
+    }
+
+    val rebuildBanner: @Composable () -> Unit = {
+        SmRebuildBanner(
+            running = rebuildState.running,
+            failed = rebuildState.failed,
+            ingestedCount = rebuildState.ingestedCount,
+            totalCount = rebuildState.totalCount,
+        )
     }
 
     Column(modifier = modifier.fillMaxSize().statusBarsPadding()) {
@@ -77,15 +92,25 @@ fun StoryMindApp(modifier: Modifier = Modifier) {
                         viewModel.lintCurrentChapter()
                         lintSheetOpen = true
                     },
+                    onRetryIngest = viewModel::retryIngest,
                 )
                 SmTab.Brain -> BrainScreen(
                     nodes = uiState.graphNodes,
                     edges = uiState.graphEdges,
                     orphanIds = uiState.orphanIds,
                     wikiEntries = uiState.wikiEntries,
+                    rebuildBanner = rebuildBanner,
                 )
-                SmTab.Wiki -> WikiScreen(entries = uiState.wikiEntries)
-                SmTab.Settings -> SettingsScreen()
+                SmTab.Wiki -> WikiScreen(
+                    entries = uiState.wikiEntries,
+                    rebuildBanner = rebuildBanner,
+                )
+                SmTab.Settings -> SettingsScreen(
+                    rebuildRunning = rebuildState.running,
+                    rebuildProgressLabel = "재구축 중 ${rebuildState.ingestedCount}/${rebuildState.totalCount}화",
+                    canRebuild = uiState.isModelAvailable,
+                    onRebuildRequest = { rebuildConfirmOpen = true },
+                )
             }
 
             SmWikiDrawer(
@@ -110,6 +135,20 @@ fun StoryMindApp(modifier: Modifier = Modifier) {
                 isOpen = lintSheetOpen,
                 onClose = { lintSheetOpen = false },
                 state = lintState,
+            )
+
+            SmBottomSheet(
+                isOpen = rebuildConfirmOpen,
+                onClose = { rebuildConfirmOpen = false },
+                title = "AI 데이터를 재구축할까요?",
+                description = "위키와 관계 그래프를 지우고 원고 전체에서 다시 만듭니다. " +
+                    "화당 몇 분씩 걸리며 원고는 변경되지 않습니다.",
+                conflictLabel = "위키·그래프가 초기화된 뒤 다시 채워져요",
+                primaryAction = SmSheetAction("재구축 시작") {
+                    rebuildConfirmOpen = false
+                    viewModel.startRebuild()
+                },
+                secondaryAction = SmSheetAction("취소") { rebuildConfirmOpen = false },
             )
         }
         SmNavBar(active = tab, onChange = { tab = it }, modifier = Modifier.navigationBarsPadding())

@@ -91,6 +91,13 @@
    분리되어 있어(불변 규칙 3) 치명적이지 않다.
 2. **샘플링 파라미터 조정** — `ConversationConfig.samplerConfig`(topK/topP/temperature)로
    temperature를 낮춰 JSON 슬립 빈도를 줄이는 실험. 스키마 보장은 아니지만 저비용.
+   **실행됨 (2026-07):** 2화 인제스트 실패 후속 조치로 `IngestService`의 3회 재생성에
+   온도 0.1→0.4→0.7 에스컬레이션을 붙였다 — `IngestService.samplerForAttempt`,
+   `OnDeviceEngine.generate(prompt, sampler)`, `ai/SamplerSettings.kt`. 저온이 재현성엔
+   유리하지만 그대로 3회 반복하면 같은 샘플링 슬립을 반복할 뿐이라 재시도마다 탐색 폭을
+   넓힌다. `IngestSamplingSmokeTest`(androidTest)가 온도별 파싱 성공률/소요시간을 관측한다.
+   lint 경로(`LintService`)는 건드리지 않았다 — 사고 모드 추론에 저온이 이득인지 아직
+   측정 전.
 3. **라이브러리 버전 추적** — constrained decoding 플래그가 실험 단계로 존재한다는 것은
    응답 스키마 API가 후속 버전에 공개될 가능성이 있다는 뜻. `litertlm` 버전 업데이트 시
    `ExperimentalFlags`와 config 클래스들을 재확인할 것.

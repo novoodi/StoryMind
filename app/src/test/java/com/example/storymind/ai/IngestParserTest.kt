@@ -1,11 +1,16 @@
 package com.example.storymind.ai
 
 import com.example.storymind.ui.components.SmBadgeType
+import kotlinx.serialization.SerializationException
+import kotlinx.serialization.json.Json
 import org.junit.Assert.assertEquals
+import org.junit.Assert.assertFalse
 import org.junit.Assert.assertTrue
 import org.junit.Test
 
 class IngestParserTest {
+
+    private val lenientJson = Json { isLenient = true }
 
     @Test
     fun `strips thought block and parses the JSON that follows`() {
@@ -190,5 +195,47 @@ class IngestParserTest {
 
         assertEquals(1, result.entities.size)
         assertEquals("jiwoo", result.entities[0].id)
+    }
+
+    @Test
+    fun `fixpoint repair recovers a missing comma that a single pass turns into a stray quote-comma`() {
+        // On-device evidence (2화 인제스트 실패, 2026-07): Gemma dropped the comma after "type"'s
+        // value AND left a stray `",` fragment in the same spot — `"character"    ",`. A single
+        // repair pass can't fix this: collapseStrayQuoteCommas doesn't match yet (no comma sits
+        // before the stray quote), but insertMissingCommas then manufactures exactly that comma,
+        // recreating the stray-quote-comma shape one pass too late. See IngestParser.repairToFixpoint.
+        val raw = """
+            {
+              "chapter_summary": "진성이 다시 등장한다.",
+              "entities": [
+                {
+                  "id": "kimjinseong",
+                  "type": "character"    ",
+                  "name": "김진성",
+                  "desc": "다시 나타난 인물"
+                }
+              ],
+              "relations": []
+            }
+        """.trimIndent()
+
+        val singlePassResult = IngestParser.singleRepairPass(raw)
+        val singlePassParses = try {
+            lenientJson.parseToJsonElement(singlePassResult)
+            true
+        } catch (e: SerializationException) {
+            false
+        }
+        assertFalse(
+            "a single repair pass was expected to leave the stray quote-comma artifact behind: $singlePassResult",
+            singlePassParses,
+        )
+
+        val result = IngestParser.parse(raw)
+
+        assertEquals(1, result.entities.size)
+        assertEquals("kimjinseong", result.entities[0].id)
+        assertEquals(SmBadgeType.Character, result.entities[0].type)
+        assertEquals("김진성", result.entities[0].name)
     }
 }

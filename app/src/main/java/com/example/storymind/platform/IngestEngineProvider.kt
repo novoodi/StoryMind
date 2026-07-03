@@ -3,6 +3,7 @@ package com.example.storymind.platform
 import android.content.Context
 import androidx.annotation.VisibleForTesting
 import com.example.storymind.ai.EngineBackend
+import com.example.storymind.ai.IngestTextEngine
 import com.example.storymind.ai.OnDeviceEngine
 import com.example.storymind.ai.OnDeviceTextEngine
 import kotlinx.coroutines.NonCancellable
@@ -49,10 +50,7 @@ object IngestEngineProvider {
         textEngineOverride != null || engineFor(context).isModelAvailable
 
     /**
-     * Runs [block] against the shared engine with refcounted lifetime: the native engine is
-     * initialized on first use and released when the last user leaves. Gemma E2B holds GBs of
-     * native memory, so idling with the model loaded is not acceptable; the cost is a re-load
-     * (seconds) when back-to-back ingests don't overlap — cheap next to a multi-minute ingest.
+     * See [withEngine] for the refcounted-lifetime rationale shared with [withIngestTextEngine].
      *
      * [block] also receives the [EngineBackend] that ended up active, so a caller can log it
      * alongside generation time — querying [OnDeviceEngine.activeBackend] *after* this call
@@ -61,13 +59,45 @@ object IngestEngineProvider {
      */
     suspend fun <T> withTextEngine(context: Context, block: suspend (OnDeviceTextEngine, EngineBackend?) -> T): T {
         textEngineOverride?.let { return block(it, null) }
+        return withEngine(context) { engine -> block(OnDeviceTextEngine(engine::generate), engine.activeBackend) }
+    }
 
+    /**
+     * Same refcounted lifetime as [withTextEngine], for [com.example.storymind.ai.IngestService]'s
+     * sampler-escalated retries instead of [LintService][com.example.storymind.ai.LintService]'s
+     * default-sampler calls. A separate method (not a `sampler` parameter added to [withTextEngine])
+     * because the two callers hand back different function types — [OnDeviceTextEngine] takes no
+     * sampler at all, so it can't express per-attempt escalation, and widening it would let a
+     * lint call accidentally pass one. [textEngineOverride] is reused as-is: it only replaces the
+     * native path, not the sampler-vs-no-sampler distinction, so existing fakes built for
+     * [OnDeviceTextEngine] keep working unchanged — the sampler argument is simply ignored on
+     * that path, same as it would be by any fake engine that doesn't care about sampling.
+     */
+    suspend fun <T> withIngestTextEngine(context: Context, block: suspend (IngestTextEngine, EngineBackend?) -> T): T {
+        textEngineOverride?.let { override ->
+            return block(IngestTextEngine { prompt, _ -> override.generate(prompt) }, null)
+        }
+        return withEngine(context) { engine -> block(IngestTextEngine(engine::generate), engine.activeBackend) }
+    }
+
+    /**
+     * Runs [block] against the shared engine with refcounted lifetime: the native engine is
+     * initialized on first use and released when the last user leaves. Gemma E2B holds GBs of
+     * native memory, so idling with the model loaded is not acceptable; the cost is a re-load
+     * (seconds) when back-to-back ingests don't overlap — cheap next to a multi-minute ingest.
+     *
+     * Callers get the raw [OnDeviceEngine] (not yet wrapped as [OnDeviceTextEngine]/
+     * [IngestTextEngine]) so [withTextEngine] and [withIngestTextEngine] can each adapt it to the
+     * function-type shape their own caller needs without duplicating the refcount/initialize/
+     * release bookkeeping.
+     */
+    private suspend fun <T> withEngine(context: Context, block: suspend (OnDeviceEngine) -> T): T {
         val engine = engineFor(context)
         lifecycle.withLock { refCount++ }
         try {
             // Idempotent, and re-creates the native engine after a refcount-zero release.
             engine.initialize()
-            return block(OnDeviceTextEngine(engine::generate), engine.activeBackend)
+            return block(engine)
         } finally {
             // NonCancellable: a cancelled worker (e.g. same-chapter re-save REPLACEd it) must
             // still balance the refcount and free native memory, and suspending calls in a

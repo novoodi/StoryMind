@@ -69,6 +69,7 @@ fun EditorScreen(
     canLint: Boolean,
     lintRunning: Boolean,
     onLint: () -> Unit,
+    onRetryIngest: () -> Unit,
     modifier: Modifier = Modifier,
 ) {
     Column(modifier = modifier.fillMaxSize()) {
@@ -83,7 +84,22 @@ fun EditorScreen(
                     fontSize = 13.sp,
                 )
             },
-            badge = { SmStatusBadge(status = aiStatus) },
+            badge = {
+                Row(verticalAlignment = Alignment.CenterVertically) {
+                    SmStatusBadge(status = aiStatus)
+                    // Only Warning (a FAILED ingest, see toAiStatus's KDoc) is user-actionable —
+                    // Analyzing/Done need no input, and Idle has nothing to retry.
+                    if (aiStatus == SmAiStatus.Warning) {
+                        SmButton(
+                            text = "다시 시도",
+                            onClick = onRetryIngest,
+                            variant = SmButtonVariant.Danger,
+                            size = SmButtonSize.Sm,
+                            modifier = Modifier.padding(start = 6.dp),
+                        )
+                    }
+                }
+            },
             right = {
                 SmIconButton(icon = SmIcons.Wiki, onClick = onWikiOpen)
                 SmIconButton(icon = SmIcons.More, onClick = {})

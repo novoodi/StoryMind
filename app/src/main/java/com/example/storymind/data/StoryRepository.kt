@@ -84,4 +84,26 @@ class StoryRepository(private val db: StoryDatabase) {
         dao.markIngested(chapterIndex, engine, promptVersion)
         true
     }
+
+    /**
+     * Wipes every piece of derived data at once: the accumulated wiki/graph snapshot plus all
+     * chapters' `ingested` flags and provenance stamps. Manuscript bodies are untouched (rule 1) —
+     * this is the "reset" half of a derived-data rebuild
+     * (see [com.example.storymind.work.ReplayWorker]).
+     *
+     * A full wipe (not "from chapter N") is the only structurally correct reset: the DB keeps only
+     * the *latest* accumulated snapshot, never any per-chapter intermediate state, so there is no
+     * point-in-time to roll back to — the only reconstructible state is "empty, then re-merge
+     * every chapter in order".
+     *
+     * One transaction for the same reason [commitIngest] is one: if the process died between
+     * "derived tables cleared" and "flags reset", chapters would still claim `ingested = true`
+     * while the wiki they were ingested *into* no longer exists — and nothing would ever re-ingest
+     * them. Atomic means a crash leaves either the old intact state or a clean fully-reset one,
+     * both of which the replay loop handles.
+     */
+    suspend fun resetDerivedData() = db.withTransaction {
+        dao.replaceProgress(ChapterProgress().toEntities())
+        dao.resetIngestProvenance()
+    }
 }

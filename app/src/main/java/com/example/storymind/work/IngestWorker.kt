@@ -7,13 +7,9 @@ import androidx.work.OneTimeWorkRequestBuilder
 import androidx.work.WorkManager
 import androidx.work.WorkerParameters
 import androidx.work.workDataOf
-import com.example.storymind.ai.EngineBackend
-import com.example.storymind.ai.IngestSchema
-import com.example.storymind.ai.IngestService
 import com.example.storymind.ai.ingestLogger
 import com.example.storymind.data.StoryRepository
 import com.example.storymind.data.db.StoryDatabase
-import com.example.storymind.data.db.toDomain
 import com.example.storymind.platform.IngestEngineProvider
 import kotlinx.coroutines.CancellationException
 import kotlinx.coroutines.sync.withLock
@@ -26,11 +22,17 @@ import kotlinx.coroutines.sync.withLock
  * ever adds derived data.
  *
  * The WorkManager dependency stays confined to this package (rule 4): the worker re-uses
- * [IngestService] as-is through the [com.example.storymind.ai.OnDeviceTextEngine] seam.
+ * [com.example.storymind.ai.IngestService] as-is through the [ChapterIngest] core.
  *
- * Failure policy is unchanged from the viewModelScope implementation: any exception ends in
- * [androidx.work.ListenableWorker.Result.failure] with no retry — the manuscript stays saved,
- * the wiki just doesn't update for that chapter.
+ * Failure policy: any exception, including [IngestParseExhaustedException], ends in
+ * [androidx.work.ListenableWorker.Result.failure] with no built-in retry — the manuscript stays
+ * saved, the wiki just doesn't update for that chapter. This is deliberately not
+ * [androidx.work.ListenableWorker.Result.retry]: a generation attempt costs on the order of a
+ * minute, so an automatic retry loop would be expensive for a slip that's often content-dependent
+ * and won't fix itself by retrying the exact same input again. Recovery is a user action —
+ * [com.example.storymind.ui.StoryViewModel.retryIngest] enqueues [ReplayWorker], which resumes
+ * from the lowest un-ingested chapter — surfaced via
+ * [com.example.storymind.ui.components.SmAiStatus.Warning] (see [com.example.storymind.ui.toAiStatus]).
  */
 class IngestWorker(
     appContext: Context,
@@ -89,43 +91,32 @@ class IngestWorker(
             )
             return false
         }
+
+        // Ordering guard: chapter k's extraction and merge are only valid on top of the
+        // accumulation through k-1 (the prompt forwards existingWiki for id reuse; merging out of
+        // order would mint duplicate ids for entities the missing chapters establish). A lower
+        // un-ingested chapter means a replay rebuild owns the ordering right now — or an earlier
+        // chapter's ingest failed — and either way this chapter must not jump the queue. Failing
+        // (not silently succeeding) keeps the recovery path honest: ReplayWorker ingests every
+        // pending chapter in ascending order, so retrying it delivers this chapter too, and the
+        // Warning badge is what leads the user there. Blank-body chapters don't count as pending:
+        // they can never ingest (saveAndIngest refuses blank bodies) and contribute no entities,
+        // so treating them as blockers would deadlock every chapter after them forever.
+        val lowestPending = repository.loadChapters()
+            .firstOrNull { !it.ingested && it.body.isNotBlank() }
+        if (lowestPending != null && lowestPending.chapterIndex < chapterIndex) {
+            throw IngestOrderingDeferredException(chapterIndex, lowestPending.chapterIndex)
+        }
+
         ingestLogger.d(
             TAG,
             "runIngest() chapter=$chapterIndex gateWaitMs=$gateWaitMs bodyLength=${chapter.body.length}",
         )
-
-        val existingWiki = repository.loadProgress().wikiEntries
-        val generateStartMs = System.currentTimeMillis()
-        var backend: EngineBackend? = null
-        val result = IngestEngineProvider.withTextEngine(applicationContext) { engine, activeBackend ->
-            backend = activeBackend
-            IngestService(engine).ingest(
-                chapterLabel = chapter.label,
-                title = chapter.label,
-                paragraphs = chapter.toDomain().paragraphs,
-                existingWiki = existingWiki,
-            )
-        }
-        // backend/wikiSize track how generateMs grows across chapters (bigger existingWiki ->
-        // longer prompt) and how much CPU fallback costs relative to GPU, at a glance in logcat.
-        ingestLogger.d(
-            TAG,
-            "runIngest() chapter=$chapterIndex generateMs=${System.currentTimeMillis() - generateStartMs} " +
-                "backend=${backend?.name ?: "unknown"} wikiSize=${existingWiki.size}",
-        )
-
-        return repository.commitIngest(
-            chapterIndex = chapterIndex,
-            ingestedBody = chapter.body,
-            result = result,
-            engine = ENGINE_LOCAL,
-            promptVersion = IngestSchema.PROMPT_VERSION,
-        )
+        return ChapterIngest.run(applicationContext, repository, chapter)
     }
 
     companion object {
         private const val TAG = "IngestWorker"
-        private const val ENGINE_LOCAL = "local"
 
         internal const val KEY_CHAPTER_INDEX = "chapterIndex"
 
@@ -134,7 +125,8 @@ class IngestWorker(
         /**
          * Unique-per-chapter name deduplicates repeat saves of the same chapter; REPLACE cancels
          * the stale run so only the newest manuscript gets ingested. Cross-chapter ordering is
-         * NOT WorkManager's job here — that's [IngestEngineProvider.ingestGate].
+         * NOT WorkManager's job here — that's [IngestEngineProvider.ingestGate] plus the ordering
+         * guard in [runIngest].
          */
         fun enqueue(context: Context, chapterIndex: Int) {
             val request = OneTimeWorkRequestBuilder<IngestWorker>()
@@ -145,3 +137,12 @@ class IngestWorker(
         }
     }
 }
+
+/** Thrown by [IngestWorker.runIngest]'s ordering guard. Like [IngestParseExhaustedException],
+ * only the generic doWork() handler catches it (→ Result.failure); a distinct type exists purely
+ * so the logcat line names the actual cause instead of a generic "failed". */
+private class IngestOrderingDeferredException(chapterIndex: Int, lowestPending: Int) :
+    Exception(
+        "chapter=$chapterIndex deferred: chapter $lowestPending is still un-ingested and must merge first; " +
+            "a replay run (retry) will deliver both in order"
+    )

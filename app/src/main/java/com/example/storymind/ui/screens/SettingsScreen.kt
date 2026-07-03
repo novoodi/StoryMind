@@ -35,7 +35,13 @@ import com.example.storymind.ui.theme.SmColors
 
 /** App preferences — mirrors the prototype's SettingsScreen. */
 @Composable
-fun SettingsScreen(modifier: Modifier = Modifier) {
+fun SettingsScreen(
+    modifier: Modifier = Modifier,
+    rebuildRunning: Boolean = false,
+    rebuildProgressLabel: String? = null,
+    canRebuild: Boolean = false,
+    onRebuildRequest: () -> Unit = {},
+) {
     var spellCheck by remember { mutableStateOf(true) }
     var autoAnalyze by remember { mutableStateOf(true) }
     var conflictAlert by remember { mutableStateOf(true) }
@@ -58,6 +64,18 @@ fun SettingsScreen(modifier: Modifier = Modifier) {
             SettingsRow(label = "자동 분석", checked = autoAnalyze, onCheckedChange = { autoAnalyze = it })
             SettingsRow(label = "설정 충돌 알림", checked = conflictAlert, onCheckedChange = { conflictAlert = it })
             SettingsRow(label = "위키 자동 생성", checked = autoWiki, onCheckedChange = { autoWiki = it })
+            // Disabled while a rebuild is already running (a second trigger would just wipe the
+            // half-rebuilt progress and start over) and while the model file is missing (the wipe
+            // would succeed but nothing could rebuild afterwards — see StoryViewModel.startRebuild).
+            SettingsRow(
+                label = "AI 데이터 재구축",
+                value = when {
+                    rebuildRunning -> rebuildProgressLabel ?: "재구축 중"
+                    !canRebuild -> "모델 없음"
+                    else -> "위키·그래프 다시 만들기"
+                },
+                onClick = if (canRebuild && !rebuildRunning) onRebuildRequest else null,
+            )
 
             SectionLabel("계정")
             SettingsRow(label = "구독 플랜", value = "스탠다드")
@@ -84,11 +102,21 @@ private fun SettingsRow(
     value: String? = null,
     checked: Boolean? = null,
     onCheckedChange: ((Boolean) -> Unit)? = null,
+    onClick: (() -> Unit)? = null,
 ) {
     Column {
         Row(
             modifier = Modifier
                 .fillMaxWidth()
+                .then(
+                    if (onClick != null) {
+                        Modifier.clickable(
+                            interactionSource = remember { MutableInteractionSource() },
+                            indication = null,
+                            onClick = onClick,
+                        )
+                    } else Modifier
+                )
                 .padding(vertical = 14.dp),
             horizontalArrangement = Arrangement.SpaceBetween,
             verticalAlignment = Alignment.CenterVertically,

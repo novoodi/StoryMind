@@ -88,6 +88,9 @@ object IngestParser {
 
     private val EMPTY = ParsedIngest(chapterSummary = "", entities = emptyList(), relations = emptyList())
 
+    /** See [repairToFixpoint]. */
+    private const val MAX_REPAIR_PASSES = 5
+
     /**
      * `isLenient` tolerates loosely-typed/unquoted primitives Gemma occasionally emits;
      * `ignoreUnknownKeys` (exercised when decoding individual entity/relation objects — see
@@ -122,13 +125,7 @@ object IngestParser {
         }
 
         return try {
-            val repaired = stripTrailingCommas(
-                insertMissingCommas(
-                    collapseDoubleCloseBraces(
-                        collapseDoubleOpenBraces(collapseStrayQuoteCommas(repairBareKeys(jsonText)))
-                    )
-                )
-            )
+            val repaired = repairToFixpoint(jsonText)
             ingestLogger.d(TAG, "parse() repaired JSON: $repaired")
             val root = json.parseToJsonElement(repaired) as? JsonObject
                 ?: throw SerializationException("Top-level JSON element is not an object: $repaired")
@@ -145,6 +142,57 @@ object IngestParser {
         if (start == -1 || end == -1 || end < start) return null
         return text.substring(start, end + 1)
     }
+
+    /**
+     * Runs the repair chain to a fixpoint instead of once. The regressing case that motivated
+     * this (2화 인제스트 실패, 2026-07): a source with a missing comma AND a stray `",` fragment
+     * overlapping the same spot — `"character"    ",` — has no comma before the stray quote, so
+     * [collapseStrayQuoteCommas] doesn't match on the first pass, but [insertMissingCommas] then
+     * inserts exactly that missing comma, *creating* the `,    ",` shape the stray-quote pass was
+     * looking for one step too late. Reordering the two passes would only fix this one
+     * combination; running the whole chain again until it stops changing anything removes the
+     * entire class of pass-A-feeds-pass-B interference, however it arises. [stripTrailingCommas]
+     * already used this same loop-to-fixpoint technique internally for its own single regex.
+     *
+     * [MAX_REPAIR_PASSES] bounds a runaway loop (there's no proof one repair can't ever flip
+     * another back and forth forever); reaching it without stabilizing is logged so it shows up
+     * in [IngestService]'s retry accounting instead of failing silently.
+     *
+     * Oscillation risk between the two passes most likely to interact is low by construction:
+     * [insertMissingCommas] only *inserts* immediately before a following `"`/`{`/`[` (its
+     * lookahead), while [stripTrailingCommas] only *removes* a comma immediately before `}`/`]` —
+     * disjoint trigger positions, so neither pass's output is the shape the other one undoes.
+     *
+     * Pass-internal order is unchanged and still matters: [collapseDoubleOpenBraces] must run
+     * before [collapseDoubleCloseBraces] (see the latter's KDoc) within every single pass, fixpoint
+     * or not.
+     */
+    private fun repairToFixpoint(json: String): String {
+        var previous = json
+        repeat(MAX_REPAIR_PASSES) { pass ->
+            val next = singleRepairPass(previous)
+            if (next == previous) return next
+            previous = next
+            ingestLogger.d(TAG, "repairToFixpoint() pass ${pass + 1} still changing output, repeating")
+        }
+        ingestLogger.w(TAG, "repairToFixpoint() did not stabilize after $MAX_REPAIR_PASSES passes: $previous")
+        return previous
+    }
+
+    /**
+     * One trip through the repair chain. `internal` (not `private`) solely so
+     * [com.example.storymind.ai.IngestParserTest] can run exactly one pass and prove it's
+     * insufficient on its own — the regression this guards against ([repairToFixpoint]'s KDoc)
+     * is specifically that one pass isn't enough for some inputs.
+     */
+    internal fun singleRepairPass(json: String): String =
+        stripTrailingCommas(
+            insertMissingCommas(
+                collapseDoubleCloseBraces(
+                    collapseDoubleOpenBraces(collapseStrayQuoteCommas(repairBareKeys(json)))
+                )
+            )
+        )
 
     private fun insertMissingCommas(json: String): String =
         json.replace(MISSING_COMMA_REGEX, "$1,$2")

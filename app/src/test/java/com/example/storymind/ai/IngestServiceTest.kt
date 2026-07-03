@@ -4,6 +4,7 @@ import com.example.storymind.data.WikiEntry
 import com.example.storymind.ui.components.SmBadgeType
 import kotlinx.coroutines.runBlocking
 import org.junit.Assert.assertEquals
+import org.junit.Assert.assertNull
 import org.junit.Assert.assertTrue
 import org.junit.Test
 
@@ -28,7 +29,7 @@ class IngestServiceTest {
         }
     """.trimIndent()
 
-    private fun serviceWithFakeEngine() = IngestService(engine = { fakeRaw })
+    private fun serviceWithFakeEngine() = IngestService(engine = { _, _ -> fakeRaw })
 
     @Test
     fun `ingest maps entities to wiki entries and placeholder-coordinate nodes`() = runBlocking {
@@ -36,7 +37,7 @@ class IngestServiceTest {
             chapterLabel = "1장",
             title = "빗소리",
             paragraphs = listOf("..."),
-        )
+        )!!
 
         assertEquals("지우와 민준이 카페에서 처음 만났다.", result.chapterSummary)
         assertEquals(4, result.wikiEntries.size)
@@ -52,7 +53,7 @@ class IngestServiceTest {
             chapterLabel = "1장",
             title = "빗소리",
             paragraphs = listOf("..."),
-        )
+        )!!
 
         assertEquals(setOf("stranger"), result.orphanIds)
     }
@@ -71,7 +72,7 @@ class IngestServiceTest {
               ]
             }
         """.trimIndent()
-        val service = IngestService(engine = { rawWithFreshId })
+        val service = IngestService(engine = { _, _ -> rawWithFreshId })
         val existingWiki = listOf(
             WikiEntry("yul", SmBadgeType.Character, "율", "1장 설명", "1장"),
             WikiEntry("jinseong", SmBadgeType.Character, "진성", "1장 설명", "1장"),
@@ -82,7 +83,7 @@ class IngestServiceTest {
             title = "2장",
             paragraphs = listOf("..."),
             existingWiki = existingWiki,
-        )
+        )!!
 
         assertEquals(setOf("yul", "jinseong"), result.wikiEntries.map { it.id }.toSet())
         assertEquals(1, result.edges.size)
@@ -94,12 +95,12 @@ class IngestServiceTest {
     @Test
     fun `ingest retries generation when the model's JSON fails to parse, then uses the recovered result`() = runBlocking {
         var callCount = 0
-        val service = IngestService(engine = {
+        val service = IngestService(engine = { _, _ ->
             callCount++
             if (callCount < 3) "이건 JSON이 아니라 그냥 잡음입니다" else fakeRaw
         })
 
-        val result = service.ingest(chapterLabel = "1장", title = "빗소리", paragraphs = listOf("..."))
+        val result = service.ingest(chapterLabel = "1장", title = "빗소리", paragraphs = listOf("..."))!!
 
         assertEquals(3, callCount)
         assertEquals(4, result.wikiEntries.size)
@@ -107,9 +108,13 @@ class IngestServiceTest {
     }
 
     @Test
-    fun `ingest gives up and falls back to an empty result after exhausting all retries`() = runBlocking {
+    fun `ingest returns null instead of an empty result after exhausting all retries`() = runBlocking {
+        // Regression for the 2화 incident (2026-07): a silent empty IngestResult here used to
+        // reach IngestWorker indistinguishable from "a chapter with genuinely nothing in it",
+        // which committed and flipped ingested=true while the wiki stayed empty. null lets
+        // IngestWorker refuse the commit — see IngestService.generateParsed's KDoc.
         var callCount = 0
-        val service = IngestService(engine = {
+        val service = IngestService(engine = { _, _ ->
             callCount++
             "이건 JSON이 아니라 그냥 잡음입니다"
         })
@@ -117,8 +122,7 @@ class IngestServiceTest {
         val result = service.ingest(chapterLabel = "1장", title = "빗소리", paragraphs = listOf("..."))
 
         assertEquals(3, callCount)
-        assertTrue(result.wikiEntries.isEmpty())
-        assertEquals("", result.chapterSummary)
+        assertNull(result)
     }
 
     @Test
@@ -132,7 +136,7 @@ class IngestServiceTest {
               "relations": []
             }
         """.trimIndent()
-        val service = IngestService(engine = { rawWithNickname })
+        val service = IngestService(engine = { _, _ -> rawWithNickname })
         val existingWiki = listOf(
             WikiEntry("jimin", SmBadgeType.Character, "이지민", "1장 설명", "1장"),
         )
@@ -142,7 +146,7 @@ class IngestServiceTest {
             title = "2장",
             paragraphs = listOf("..."),
             existingWiki = existingWiki,
-        )
+        )!!
 
         assertEquals(setOf("jimin"), result.wikiEntries.map { it.id }.toSet())
     }
@@ -159,9 +163,9 @@ class IngestServiceTest {
               "relations": []
             }
         """.trimIndent()
-        val service = IngestService(engine = { rawWithDuplicateEntity })
+        val service = IngestService(engine = { _, _ -> rawWithDuplicateEntity })
 
-        val result = service.ingest(chapterLabel = "1장", title = "1장", paragraphs = listOf("..."))
+        val result = service.ingest(chapterLabel = "1장", title = "1장", paragraphs = listOf("..."))!!
 
         assertEquals(1, result.wikiEntries.size)
         assertEquals("두 번째 언급", result.wikiEntries[0].desc)
@@ -181,11 +185,33 @@ class IngestServiceTest {
               ]
             }
         """.trimIndent()
-        val service = IngestService(engine = { rawWithBadRelation })
+        val service = IngestService(engine = { _, _ -> rawWithBadRelation })
 
-        val result = service.ingest(chapterLabel = "1장", title = "빗소리", paragraphs = listOf("..."))
+        val result = service.ingest(chapterLabel = "1장", title = "빗소리", paragraphs = listOf("..."))!!
 
         assertTrue(result.edges.isEmpty())
         assertEquals(setOf("jiwoo"), result.orphanIds)
+    }
+
+    @Test
+    fun `ingest escalates sampler temperature across retries instead of repeating attempt 1's settings`() = runBlocking {
+        val seenTemperatures = mutableListOf<Double>()
+        val seenSeeds = mutableListOf<Int>()
+        val service = IngestService(engine = { _, sampler ->
+            seenTemperatures += sampler.temperature
+            seenSeeds += sampler.seed
+            if (seenTemperatures.size < 3) "이건 JSON이 아니라 그냥 잡음입니다" else fakeRaw
+        })
+
+        service.ingest(chapterLabel = "1장", title = "빗소리", paragraphs = listOf("..."))
+
+        assertEquals(3, seenTemperatures.size)
+        // Strictly increasing: each retry widens sampling instead of reusing attempt 1's
+        // near-deterministic settings — see IngestService.samplerForAttempt's KDoc.
+        assertTrue(seenTemperatures[0] < seenTemperatures[1])
+        assertTrue(seenTemperatures[1] < seenTemperatures[2])
+        // Distinct seeds so a retried chapter doesn't necessarily replay the same three
+        // generations that just failed.
+        assertEquals(3, seenSeeds.toSet().size)
     }
 }

@@ -3,8 +3,10 @@ package com.example.storymind.ai
 import android.content.Context
 import android.util.Log
 import com.google.ai.edge.litertlm.Backend
+import com.google.ai.edge.litertlm.ConversationConfig
 import com.google.ai.edge.litertlm.Engine
 import com.google.ai.edge.litertlm.EngineConfig
+import com.google.ai.edge.litertlm.SamplerConfig
 import java.io.File
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.sync.Mutex
@@ -81,12 +83,24 @@ class OnDeviceEngine(context: Context) {
         }
     }
 
+    /**
+     * [sampler] is null by default, matching this method's behavior before ingest's retry
+     * escalation was added: `createConversation(ConversationConfig())` leaves `samplerConfig`
+     * null, which — per a bytecode read of `litertlm-android-0.13.1`'s `SamplerConfig`/
+     * `ConversationConfig` classes (no public API exposes it) — falls through to whatever
+     * sampler the native engine defaults to internally; that default isn't introspectable from
+     * the Kotlin side. Only [IngestService] passes a non-null [sampler] today; [LintService]
+     * (via [com.example.storymind.platform.IngestEngineProvider.withTextEngine]) still always
+     * calls this with the default, so its sampling is unchanged by ingest's escalation.
+     */
     @OptIn(com.google.ai.edge.litertlm.ExperimentalApi::class)
-    suspend fun generate(prompt: String): String = withContext(Dispatchers.IO) {
+    suspend fun generate(prompt: String, sampler: SamplerSettings? = null): String = withContext(Dispatchers.IO) {
         mutex.withLock {
             val activeEngine =
                 checkNotNull(engine) { "Engine is not initialized. Call initialize() first." }
-            val conversation = activeEngine.createConversation()
+            val conversation = activeEngine.createConversation(
+                ConversationConfig(samplerConfig = sampler?.toLiteRtSamplerConfig())
+            )
             try {
                 val wallClockStart = System.currentTimeMillis()
                 val message = conversation.sendMessage(prompt)
@@ -126,6 +140,9 @@ class OnDeviceEngine(context: Context) {
             backend = null
         }
     }
+
+    private fun SamplerSettings.toLiteRtSamplerConfig() =
+        SamplerConfig(topK = topK, topP = topP, temperature = temperature, seed = seed)
 
     companion object {
         private const val TAG = "OnDeviceEngine"

@@ -15,11 +15,19 @@ import com.example.storymind.platform.IngestEngineProvider
 import com.example.storymind.ui.components.SmAiStatus
 import com.example.storymind.work.IngestWorker
 import com.example.storymind.work.LintWorker
+import com.example.storymind.work.ReplayWorker
+import com.example.storymind.ai.ingestLogger
 import kotlinx.coroutines.ExperimentalCoroutinesApi
 import kotlinx.coroutines.flow.MutableStateFlow
+import kotlinx.coroutines.flow.SharingStarted
 import kotlinx.coroutines.flow.StateFlow
+import kotlinx.coroutines.flow.catch
+import kotlinx.coroutines.flow.combine
+import kotlinx.coroutines.flow.emptyFlow
 import kotlinx.coroutines.flow.filterNotNull
+import kotlinx.coroutines.flow.first
 import kotlinx.coroutines.flow.flatMapLatest
+import kotlinx.coroutines.flow.stateIn
 import kotlinx.coroutines.flow.update
 import kotlinx.coroutines.launch
 
@@ -44,13 +52,30 @@ data class StoryUiState(
 }
 
 /**
+ * Derived-data rebuild progress for the Brain/Wiki banner. Counts come from the chapters table's
+ * `ingested` flags, not from WorkManager: the flags survive process death and are exactly what the
+ * replay loop itself reads, so "n/m" can never disagree with what will actually be rebuilt.
+ * [failed] stays false once every eligible chapter is ingested even if the last replay WorkInfo
+ * record says FAILED — a later successful pass (or a direct save of the failed chapter) heals the
+ * data, and a warning about a problem that no longer exists would just erode trust in the banner.
+ */
+data class RebuildUiState(
+    val running: Boolean = false,
+    val failed: Boolean = false,
+    val ingestedCount: Int = 0,
+    val totalCount: Int = 0,
+) {
+    val visible: Boolean get() = running || failed
+}
+
+/**
  * Owns Room persistence and the editor's UI state for the writing flow: type a chapter -> save ->
  * ingest -> wiki/graph accumulate -> next chapter, surviving process death.
  *
  * The ingest itself no longer runs here: saving commits the manuscript (`ingested = false`) and
  * enqueues [IngestWorker], which survives this ViewModel — and the whole process — being torn
  * down. This ViewModel only *observes* that work's [WorkInfo] to drive the status badge, and
- * reloads the accumulated progress when a run succeeds. The engine is owned by
+ * re-reads the accumulated progress whenever a chapter's flags change. The engine is owned by
  * [IngestEngineProvider] at app scope, which is why there is no `onCleared` releasing it anymore.
  */
 class StoryViewModel(application: Application) : AndroidViewModel(application) {
@@ -58,10 +83,20 @@ class StoryViewModel(application: Application) : AndroidViewModel(application) {
     private val repository = StoryRepository(StoryDatabase.get(application))
     private val workManager = WorkManager.getInstance(application)
 
-    /** Chapter whose unique ingest work this ViewModel watches: the last chapter saved this
-     * session, or (after a restart) the last chapter found in the DB — that's the only one whose
-     * worker can still be pending/running. */
-    private val watchedChapterIndex = MutableStateFlow<Int?>(null)
+    /**
+     * Which work's state drives the editor's AI badge. One badge, two possible sources: the
+     * per-chapter [IngestWorker] of the last save, or the [ReplayWorker] chain — whichever the
+     * user most recently set in motion. A single watched source (instead of merging both flows)
+     * keeps the badge unambiguous: after a retry/rebuild the per-chapter FAILED record that
+     * prompted it still exists in WorkManager, and merging would show that stale Warning next to
+     * the replay's Analyzing forever.
+     */
+    private sealed interface AiWatch {
+        data class Chapter(val index: Int) : AiWatch
+        data object Replay : AiWatch
+    }
+
+    private val aiWatch = MutableStateFlow<AiWatch?>(null)
 
     /** See [toAiStatus] — gates SUCCEEDED → Done so a finished work record persisted from a
      * previous session doesn't resurrect the Done badge on cold start. */
@@ -70,14 +105,31 @@ class StoryViewModel(application: Application) : AndroidViewModel(application) {
     private val _uiState = MutableStateFlow(StoryUiState())
     val uiState: StateFlow<StoryUiState> = _uiState
 
-    /** Chapter whose lint work this ViewModel watches. Unlike [watchedChapterIndex], this stays
-     * null until [lintCurrentChapter] is actually called — lint is on-demand, so there is no
-     * "resume watching after restart" case to handle and no stale-session gate to write (see
-     * [toLintUiState]'s KDoc). */
+    /** Chapter whose lint work this ViewModel watches. Unlike [aiWatch], this stays null until
+     * [lintCurrentChapter] is actually called — lint is on-demand, so there is no "resume watching
+     * after restart" case to handle and no stale-session gate to write (see [toLintUiState]'s
+     * KDoc). */
     private val watchedLintChapterIndex = MutableStateFlow<Int?>(null)
 
     private val _lintState = MutableStateFlow<LintUiState>(LintUiState.Idle)
     val lintState: StateFlow<LintUiState> = _lintState
+
+    /** Brain/Wiki rebuild banner; also read by [saveAndIngest] to keep the badge on the replay
+     * chain while a rebuild is running (the per-save worker defers to it anyway). */
+    val rebuildState: StateFlow<RebuildUiState> = combine(
+        workManager.getWorkInfosForUniqueWorkFlow(ReplayWorker.UNIQUE_NAME),
+        repository.observeChapters(),
+    ) { infos, chapters ->
+        val replayState = aggregateReplayState(infos)
+        val eligible = chapters.filter { it.body.isNotBlank() }
+        val pendingRemain = eligible.any { !it.ingested }
+        RebuildUiState(
+            running = replayState != null && !replayState.isFinished,
+            failed = replayState == WorkInfo.State.FAILED && pendingRemain,
+            ingestedCount = eligible.count { it.ingested },
+            totalCount = eligible.size,
+        )
+    }.stateIn(viewModelScope, SharingStarted.Eagerly, RebuildUiState())
 
     init {
         viewModelScope.launch {
@@ -109,27 +161,60 @@ class StoryViewModel(application: Application) : AndroidViewModel(application) {
                     isLoaded = true,
                 )
             }
-            watchedChapterIndex.value = last?.chapterIndex
+
+            // Cold-start watch target: a replay chain that is still active — or FAILED with
+            // chapters actually missing — outranks the last chapter's own work record, because
+            // it's the thing whose outcome the user is still waiting on (or must retry).
+            val replayState = aggregateReplayState(
+                workManager.getWorkInfosForUniqueWorkFlow(ReplayWorker.UNIQUE_NAME).first()
+            )
+            aiWatch.value = when {
+                replayState != null && (!replayState.isFinished || replayState == WorkInfo.State.FAILED) ->
+                    AiWatch.Replay
+                else -> last?.let { AiWatch.Chapter(it.chapterIndex) }
+            }
         }
         observeIngestWork()
         observeLintWork()
+        observeChapterFlags()
     }
 
     @OptIn(ExperimentalCoroutinesApi::class)
     private fun observeIngestWork() {
         viewModelScope.launch {
-            watchedChapterIndex
+            aiWatch
                 .filterNotNull()
-                .flatMapLatest { index ->
-                    workManager.getWorkInfosForUniqueWorkFlow(IngestWorker.uniqueNameFor(index))
+                .flatMapLatest { watch ->
+                    when (watch) {
+                        is AiWatch.Chapter ->
+                            workManager.getWorkInfosForUniqueWorkFlow(IngestWorker.uniqueNameFor(watch.index))
+                        AiWatch.Replay ->
+                            workManager.getWorkInfosForUniqueWorkFlow(ReplayWorker.UNIQUE_NAME)
+                    }
                 }
-                .collect { infos -> onIngestWorkChanged(infos.firstOrNull()?.state) }
+                .collect { infos ->
+                    val state = when (aiWatch.value) {
+                        // A replay chain is several WorkInfos (one per self-appended hop); a
+                        // per-chapter save is always a single record.
+                        AiWatch.Replay -> aggregateReplayState(infos)
+                        else -> infos.firstOrNull()?.state
+                    }
+                    onIngestWorkChanged(state)
+                }
         }
     }
 
     private suspend fun onIngestWorkChanged(state: WorkInfo.State?) {
         if (state != null && !state.isFinished) sessionSawActiveWork = true
-        val status = state.toAiStatus(sessionSawActiveWork)
+        var status = state.toAiStatus(sessionSawActiveWork)
+        // A FAILED record can outlive the failure it reported: a later replay pass (rebuild or
+        // retry) ingests the chapter out-of-band of the record's own unique work. The DB flag is
+        // the truth about whether data is actually missing, so a Warning is only shown while some
+        // non-blank chapter genuinely has no ingested data behind it.
+        if (status == SmAiStatus.Warning) {
+            val anyPending = repository.loadChapters().any { !it.ingested && it.body.isNotBlank() }
+            if (!anyPending) status = SmAiStatus.Idle
+        }
         if (status == SmAiStatus.Done) {
             // The worker committed a new progress snapshot; re-read it so wiki/graph reflect the
             // chapter that just finished ingesting.
@@ -141,11 +226,37 @@ class StoryViewModel(application: Application) : AndroidViewModel(application) {
                     graphEdges = progress.edges,
                     orphanIds = progress.orphanIds,
                     aiStatus = status,
-                    lastSaveIngested = true,
                 )
             }
         } else {
             _uiState.update { it.copy(aiStatus = status) }
+        }
+    }
+
+    /**
+     * Re-reads derived state whenever any chapter row changes. This is what makes a rebuild's
+     * progress visible as it happens — each replay commit flips one chapter's flag, which lands
+     * here and refreshes wiki/graph (design decision 2: the wiki visibly grows back instead of
+     * being staged behind a spinner). It also keeps [StoryUiState.lastSaveIngested] truthful from
+     * the DB instead of from badge transitions: a rebuild resets and later restores the current
+     * chapter's flag, and the lint button must track that, not the last save's outcome.
+     */
+    private fun observeChapterFlags() {
+        viewModelScope.launch {
+            repository.observeChapters().collect { chapters ->
+                if (!_uiState.value.isLoaded) return@collect
+                val progress = repository.loadProgress()
+                _uiState.update { state ->
+                    val current = chapters.firstOrNull { it.chapterIndex == state.currentChapterIndex }
+                    state.copy(
+                        wikiEntries = progress.wikiEntries,
+                        graphNodes = progress.nodes,
+                        graphEdges = progress.edges,
+                        orphanIds = progress.orphanIds,
+                        lastSaveIngested = current?.ingested == true,
+                    )
+                }
+            }
         }
     }
 
@@ -203,8 +314,54 @@ class StoryViewModel(application: Application) : AndroidViewModel(application) {
             sessionSawActiveWork = true
             _uiState.update { it.copy(aiStatus = SmAiStatus.Analyzing) }
             IngestWorker.enqueue(getApplication(), chapterIndex)
-            watchedChapterIndex.value = chapterIndex
+            // While a rebuild is running the per-save worker above defers to the replay chain
+            // (IngestWorker's ordering guard), and the chain is what will actually ingest this
+            // chapter — so the badge keeps watching the chain rather than reporting the deferral.
+            if (!rebuildState.value.running) {
+                aiWatch.value = AiWatch.Chapter(chapterIndex)
+            }
         }
+    }
+
+    /**
+     * Recovery from a FAILED ingest, surfaced as [SmAiStatus.Warning] (see [toAiStatus]'s KDoc for
+     * why FAILED doesn't fade quietly like a benign CANCELLED does). Enqueues [ReplayWorker]'s
+     * resume — not the single chapter's [IngestWorker] — because the failed chapter may not be the
+     * only pending one: any chapter saved after the failure was deferred by the ordering guard,
+     * and a mid-rebuild failure leaves everything after the failed chapter pending too. The resume
+     * ingests all of them in order; when only the one chapter is pending it degenerates to exactly
+     * the old single-chapter retry. Manual-only by design, matching the workers' no-auto-retry
+     * policy: a generation attempt costs on the order of a minute, and the same manuscript is
+     * likely to hit the same slip again without a human noticing first.
+     */
+    fun retryIngest() {
+        if (_uiState.value.aiStatus != SmAiStatus.Warning) return
+
+        sessionSawActiveWork = true
+        _uiState.update { it.copy(aiStatus = SmAiStatus.Analyzing) }
+        ReplayWorker.enqueueResume(getApplication())
+        aiWatch.value = AiWatch.Replay
+    }
+
+    /**
+     * Wipes all derived data and rebuilds it from the manuscripts, chapter by chapter — see
+     * [ReplayWorker] for the operation's definition and ordering guarantees. Guarded on model
+     * availability: the reset half would run fine without the model, but then nothing could
+     * execute the rebuild half, leaving the user with an empty wiki and no way back until the
+     * model file reappears. [SettingsScreen] disables the entry point on the same flag; this
+     * check is the non-UI backstop.
+     */
+    fun startRebuild() {
+        if (!_uiState.value.isModelAvailable) return
+
+        // Any lint result references wiki history that is about to be wiped.
+        _lintState.value = LintUiState.Idle
+        watchedLintChapterIndex.value = null
+
+        sessionSawActiveWork = true
+        _uiState.update { it.copy(aiStatus = SmAiStatus.Analyzing) }
+        ReplayWorker.enqueueRebuild(getApplication())
+        aiWatch.value = AiWatch.Replay
     }
 
     /**
@@ -249,6 +406,23 @@ class StoryViewModel(application: Application) : AndroidViewModel(application) {
                 canAdvance = false,
                 lastSaveIngested = false,
             )
+        }
+    }
+
+    private companion object {
+        /**
+         * Collapses a replay chain's WorkInfos (one per self-appended hop, so usually several)
+         * into the single state [toAiStatus] understands. Any hop still pending means the chain
+         * is running; otherwise one FAILED hop means the whole rebuild stopped there — the
+         * remaining hops were never created, so "all finished + one FAILED" is the chain's true
+         * terminal state, not a partial success.
+         */
+        fun aggregateReplayState(infos: List<WorkInfo>): WorkInfo.State? = when {
+            infos.isEmpty() -> null
+            infos.any { !it.state.isFinished } -> WorkInfo.State.RUNNING
+            infos.any { it.state == WorkInfo.State.FAILED } -> WorkInfo.State.FAILED
+            infos.any { it.state == WorkInfo.State.CANCELLED } -> WorkInfo.State.CANCELLED
+            else -> WorkInfo.State.SUCCEEDED
         }
     }
 }

@@ -80,6 +80,7 @@ fun BrainScreen(
     orphanIds: Set<String>,
     wikiEntries: List<WikiEntry>,
     modifier: Modifier = Modifier,
+    rebuildBanner: (@Composable () -> Unit)? = null,
 ) {
     var filter by remember { mutableStateOf("전체") }
     var selected by remember { mutableStateOf<String?>(null) }
@@ -91,6 +92,7 @@ fun BrainScreen(
 
     Column(modifier = modifier.fillMaxSize().background(SmColors.surfaceSubtle)) {
         SmToolbar(title = "세컨드 브레인")
+        rebuildBanner?.invoke()
 
         LazyRow(
             modifier = Modifier
