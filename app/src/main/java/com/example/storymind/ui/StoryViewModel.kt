@@ -1,6 +1,7 @@
 package com.example.storymind.ui
 
 import android.app.Application
+import android.net.Uri
 import androidx.lifecycle.AndroidViewModel
 import androidx.lifecycle.viewModelScope
 import androidx.work.WorkInfo
@@ -9,6 +10,8 @@ import com.example.storymind.data.GraphEdge
 import com.example.storymind.data.GraphNode
 import com.example.storymind.data.StoryRepository
 import com.example.storymind.data.WikiEntry
+import com.example.storymind.data.backup.BackupValidation
+import com.example.storymind.data.backup.StoryBackupManager
 import com.example.storymind.data.db.ChapterEntity
 import com.example.storymind.data.db.StoryDatabase
 import com.example.storymind.platform.IngestEngineProvider
@@ -69,6 +72,28 @@ data class RebuildUiState(
 }
 
 /**
+ * 백업/내보내기 플로우의 상태 기계. 성공·실패까지 전부 상태로 표현하는 이유: SAF 쓰기와
+ * 복원 검증은 수백 ms~수 초가 걸리는 백그라운드 작업이라, 결과를 콜백으로 흘리면 그 사이
+ * 화면 회전/프로세스 복원에서 유실된다 — 시트를 띄울 근거는 관찰 가능한 상태여야 한다.
+ * [RestoreReady]가 별도 상태인 것이 복원 안전장치 b의 구현이다: 검증 통과가 곧 실행이
+ * 아니라, 사용자의 명시적 확인([StoryViewModel.confirmRestore])을 기다리는 중간 정지점이다.
+ */
+sealed interface BackupUiState {
+    data object Idle : BackupUiState
+    data object Working : BackupUiState
+    data object TxtExported : BackupUiState
+    data object BackupExported : BackupUiState
+    data object ExportFailed : BackupUiState
+    /** 검증 통과, 사용자 확인 대기 — 스테이징 파일이 유지되고 있다. */
+    data object RestoreReady : BackupUiState
+    /** 검증 거부 — 아무것도 바뀌지 않았고 [reason]이 그 이유다(안전장치 a). */
+    data class RestoreInvalid(val reason: String) : BackupUiState
+    data object RestoreFailed : BackupUiState
+    /** 직전 프로세스에서 확정된 복원이 이번 실행 시작 시 적용됐다 — 완료 안내용. */
+    data object RestoreCompleted : BackupUiState
+}
+
+/**
  * Owns Room persistence and the editor's UI state for the writing flow: type a chapter -> save ->
  * ingest -> wiki/graph accumulate -> next chapter, surviving process death.
  *
@@ -113,6 +138,9 @@ class StoryViewModel(application: Application) : AndroidViewModel(application) {
 
     private val _lintState = MutableStateFlow<LintUiState>(LintUiState.Idle)
     val lintState: StateFlow<LintUiState> = _lintState
+
+    private val _backupState = MutableStateFlow<BackupUiState>(BackupUiState.Idle)
+    val backupState: StateFlow<BackupUiState> = _backupState
 
     /** Brain/Wiki rebuild banner; also read by [saveAndIngest] to keep the badge on the replay
      * chain while a rebuild is running (the per-save worker defers to it anyway). */
@@ -177,6 +205,13 @@ class StoryViewModel(application: Application) : AndroidViewModel(application) {
         observeIngestWork()
         observeLintWork()
         observeChapterFlags()
+        viewModelScope.launch {
+            // 복원은 프로세스 재시작 너머에서 완료되므로(StoryBackupManager KDoc 원칙 2),
+            // 완료 안내는 새 프로세스의 첫 ViewModel이 마커를 소비해서 띄운다.
+            if (StoryBackupManager.consumeRestoreCompletedMarker(getApplication())) {
+                _backupState.value = BackupUiState.RestoreCompleted
+            }
+        }
     }
 
     @OptIn(ExperimentalCoroutinesApi::class)
@@ -380,6 +415,62 @@ class StoryViewModel(application: Application) : AndroidViewModel(application) {
         _lintState.value = LintUiState.Running
         LintWorker.enqueue(getApplication(), chapterIndex)
         watchedLintChapterIndex.value = chapterIndex
+    }
+
+    /** SAF [uri]로 전체 원고를 텍스트 내보내기. 원고만 읽는 연산이라 가드가 없다 — 실패해도
+     * 잃는 것은 내보내기 한 번뿐이다. */
+    fun exportManuscriptTxt(uri: Uri) {
+        viewModelScope.launch {
+            _backupState.value = BackupUiState.Working
+            val ok = StoryBackupManager.exportManuscriptTxt(getApplication(), uri)
+            _backupState.value = if (ok) BackupUiState.TxtExported else BackupUiState.ExportFailed
+        }
+    }
+
+    /** SAF [uri]로 DB 전체를 단일 백업 파일로 내보내기 — 방식은 [StoryBackupManager] KDoc. */
+    fun exportBackup(uri: Uri) {
+        viewModelScope.launch {
+            _backupState.value = BackupUiState.Working
+            val ok = StoryBackupManager.exportBackup(getApplication(), uri)
+            _backupState.value = if (ok) BackupUiState.BackupExported else BackupUiState.ExportFailed
+        }
+    }
+
+    /** 복원 1단계 — 후보 검증까지만. 통과하면 [BackupUiState.RestoreReady]에서 멈춰 사용자
+     * 확인을 기다리고, 거부되면 사유와 함께 아무것도 바꾸지 않는다(안전장치 a·b). */
+    fun stageRestore(uri: Uri) {
+        viewModelScope.launch {
+            _backupState.value = BackupUiState.Working
+            _backupState.value = when (val v = StoryBackupManager.stageRestore(getApplication(), uri)) {
+                is BackupValidation.Valid -> BackupUiState.RestoreReady
+                is BackupValidation.Invalid -> BackupUiState.RestoreInvalid(v.rejection.userMessage)
+            }
+        }
+    }
+
+    /** 복원 확정 — 안전망 백업과 pending 승격이 성공하면 프로세스를 재시작해 다음 실행이
+     * 파일을 교체하게 한다. 성공 경로에서는 이 프로세스가 끝나므로 이후 상태 갱신이 없다. */
+    fun confirmRestore() {
+        if (_backupState.value != BackupUiState.RestoreReady) return
+        viewModelScope.launch {
+            _backupState.value = BackupUiState.Working
+            if (StoryBackupManager.promoteStagedRestore(getApplication())) {
+                StoryBackupManager.restartProcess(getApplication())
+            } else {
+                _backupState.value = BackupUiState.RestoreFailed
+            }
+        }
+    }
+
+    fun cancelRestore() {
+        viewModelScope.launch {
+            StoryBackupManager.discardStagedRestore(getApplication())
+            _backupState.value = BackupUiState.Idle
+        }
+    }
+
+    fun dismissBackupState() {
+        _backupState.value = BackupUiState.Idle
     }
 
     fun startNextChapter() {

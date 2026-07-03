@@ -39,6 +39,10 @@ data class SmSheetAction(val label: String, val onClick: () -> Unit)
  * Slide-up overlay sheet for AI conflict warnings — mirrors
  * components/feedback/BottomSheet.jsx. Animates in at 280ms ease-decelerate.
  * Caller places this inside a Box(Modifier.fillMaxSize()) alongside screen content.
+ *
+ * [secondaryAction]과 [conflictLabel]은 null이면 각각 보조 버튼/경고 칩이 빠진다 — 백업
+ * 내보내기 결과처럼 "확인" 하나면 충분한 안내에까지 취소 버튼과 경고 칩을 강제하면 모든
+ * 안내가 경고처럼 읽히기 때문. 기본값은 기존 호출부(충돌 경고)의 모양 그대로다.
  */
 @Composable
 fun SmBottomSheet(
@@ -47,9 +51,9 @@ fun SmBottomSheet(
     title: String,
     description: String,
     primaryAction: SmSheetAction,
-    secondaryAction: SmSheetAction,
+    secondaryAction: SmSheetAction? = null,
     modifier: Modifier = Modifier,
-    conflictLabel: String = "설정 충돌을 발견했어요",
+    conflictLabel: String? = "설정 충돌을 발견했어요",
 ) {
     val scrimInteraction = remember { MutableInteractionSource() }
     AnimatedVisibility(
@@ -99,34 +103,36 @@ fun SmBottomSheet(
                             .background(SmColors.borderDefault)
                     )
                     androidx.compose.foundation.layout.Spacer(Modifier.height(20.dp))
-                    Box(
-                        modifier = Modifier
-                            .fillMaxWidth()
-                            .clip(RoundedCornerShape(SmRadius.md))
-                            .background(SmColors.surfaceWarning)
-                            .padding(horizontal = 14.dp, vertical = 11.dp),
-                    ) {
-                        androidx.compose.foundation.layout.Row(
-                            verticalAlignment = Alignment.Top,
+                    if (conflictLabel != null) {
+                        Box(
+                            modifier = Modifier
+                                .fillMaxWidth()
+                                .clip(RoundedCornerShape(SmRadius.md))
+                                .background(SmColors.surfaceWarning)
+                                .padding(horizontal = 14.dp, vertical = 11.dp),
                         ) {
-                            Box(
-                                modifier = Modifier
-                                    .padding(top = 5.dp, end = 9.dp)
-                                    .size(6.dp)
-                                    .clip(androidx.compose.foundation.shape.CircleShape)
-                                    .background(SmColors.nodeOrphan)
-                            )
-                            Text(
-                                text = conflictLabel,
-                                color = SmColors.nodeOrphan,
-                                fontFamily = Pretendard,
-                                fontWeight = FontWeight.SemiBold,
-                                fontSize = 13.sp,
-                                lineHeight = 20.sp,
-                            )
+                            androidx.compose.foundation.layout.Row(
+                                verticalAlignment = Alignment.Top,
+                            ) {
+                                Box(
+                                    modifier = Modifier
+                                        .padding(top = 5.dp, end = 9.dp)
+                                        .size(6.dp)
+                                        .clip(androidx.compose.foundation.shape.CircleShape)
+                                        .background(SmColors.nodeOrphan)
+                                )
+                                Text(
+                                    text = conflictLabel,
+                                    color = SmColors.nodeOrphan,
+                                    fontFamily = Pretendard,
+                                    fontWeight = FontWeight.SemiBold,
+                                    fontSize = 13.sp,
+                                    lineHeight = 20.sp,
+                                )
+                            }
                         }
+                        androidx.compose.foundation.layout.Spacer(Modifier.height(16.dp))
                     }
-                    androidx.compose.foundation.layout.Spacer(Modifier.height(16.dp))
                     Text(
                         text = title,
                         color = SmColors.textPrimary,
@@ -150,14 +156,16 @@ fun SmBottomSheet(
                         size = SmButtonSize.Lg,
                         fullWidth = true,
                     )
-                    androidx.compose.foundation.layout.Spacer(Modifier.height(10.dp))
-                    SmButton(
-                        text = secondaryAction.label,
-                        onClick = secondaryAction.onClick,
-                        variant = SmButtonVariant.Ghost,
-                        size = SmButtonSize.Md,
-                        fullWidth = true,
-                    )
+                    if (secondaryAction != null) {
+                        androidx.compose.foundation.layout.Spacer(Modifier.height(10.dp))
+                        SmButton(
+                            text = secondaryAction.label,
+                            onClick = secondaryAction.onClick,
+                            variant = SmButtonVariant.Ghost,
+                            size = SmButtonSize.Md,
+                            fullWidth = true,
+                        )
+                    }
                 }
             }
         }

@@ -42,13 +42,18 @@ abstract class StoryDatabase : RoomDatabase() {
     abstract fun storyDao(): StoryDao
 
     companion object {
+        /** 파일 교체(백업 복원)가 [android.content.Context.getDatabasePath]로 같은 파일을
+         * 찾아야 해서 상수로 공유한다 — 문자열이 두 곳에서 어긋나면 복원이 엉뚱한 경로에
+         * DB를 만들고 실사용 DB는 그대로인 조용한 실패가 된다. */
+        const val DB_NAME = "storymind.db"
+
         @Volatile private var instance: StoryDatabase? = null
 
         fun get(context: Context): StoryDatabase = instance ?: synchronized(this) {
             instance ?: Room.databaseBuilder(
                 context.applicationContext,
                 StoryDatabase::class.java,
-                "storymind.db",
+                DB_NAME,
             )
                 .addMigrations(MIGRATION_1_2)
                 .build()

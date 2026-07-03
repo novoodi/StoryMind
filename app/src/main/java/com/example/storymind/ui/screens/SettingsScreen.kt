@@ -41,6 +41,10 @@ fun SettingsScreen(
     rebuildProgressLabel: String? = null,
     canRebuild: Boolean = false,
     onRebuildRequest: () -> Unit = {},
+    backupBusy: Boolean = false,
+    onExportTxt: () -> Unit = {},
+    onExportBackup: () -> Unit = {},
+    onImportBackup: () -> Unit = {},
 ) {
     var spellCheck by remember { mutableStateOf(true) }
     var autoAnalyze by remember { mutableStateOf(true) }
@@ -77,9 +81,27 @@ fun SettingsScreen(
                 onClick = if (canRebuild && !rebuildRunning) onRebuildRequest else null,
             )
 
+            SectionLabel("백업 및 내보내기")
+            // 세 액션 모두 SAF라 파일 선택 UI가 뜬다 — 작업 중(backupBusy)에는 진입을 막아
+            // 같은 대상에 두 작업이 겹치는 것을 원천 차단한다.
+            SettingsRow(
+                label = "원고 TXT 내보내기",
+                value = if (backupBusy) "처리 중" else "전체 원고를 텍스트 파일로",
+                onClick = if (backupBusy) null else onExportTxt,
+            )
+            SettingsRow(
+                label = "백업 파일 내보내기",
+                value = if (backupBusy) "처리 중" else "원고·위키·그래프 전체",
+                onClick = if (backupBusy) null else onExportBackup,
+            )
+            SettingsRow(
+                label = "백업 가져오기",
+                value = if (backupBusy) "처리 중" else "백업 파일로 복원",
+                onClick = if (backupBusy) null else onImportBackup,
+            )
+
             SectionLabel("계정")
             SettingsRow(label = "구독 플랜", value = "스탠다드")
-            SettingsRow(label = "데이터 백업", value = "방금 전")
         }
     }
 }
