@@ -238,4 +238,162 @@ class IngestParserTest {
         assertEquals(SmBadgeType.Character, result.entities[0].type)
         assertEquals("김진성", result.entities[0].name)
     }
+
+    @Test
+    fun `repairs a key that lost its opening quote right after a comma`() {
+        // Actual failure fixture (1화 인제스트, 2026-07): attempt 1's raw response, captured from
+        // logcat after repairToFixpoint already stabilized on it and json.parseToJsonElement still
+        // rejected it — "type": "character",name": "엄마" is missing the opening quote on `name`.
+        // Before MISSING_KEY_OPEN_QUOTE_REGEX existed, this made attempt 1 fail outright and
+        // IngestService had to spend a second (higher-temperature) generation recovering the
+        // chapter's wiki data.
+        val raw = """
+            {
+              "chapter_summary": "율과 진성은 지민에 대한 복잡한 감정과 과거의 행동에 대해 이야기하며 꿈을 꾸는 과정을 공유한다.",
+              "entities": [
+                {
+                  "id": "율",
+                  "type": "character",
+                  "name": "율",
+                  "desc": "침대에서 일어나 대화를 주도하며 상황을 주도하고 꿈을 꾸게 하는 인물"
+                },
+                {
+                  "id": "진성",
+                  "type": "character", "name": "진성",
+                  "desc": "지민과의 관계에 대해 고백을 하며 죄책감을 느끼는 인물"
+                },
+                {
+                  "id": "엄마",
+                  "type": "character",name": "엄마",
+                  "desc": "진성의 방에서 신음 소리를 듣고 들어온 인물"
+                }
+              ],
+              "relations": [
+                {"from": "율", "to": "진성"},
+                {"from": "진성", "to": "엄마"}
+              ]
+            }
+        """.trimIndent()
+
+        val result = IngestParser.parse(raw)
+
+        assertEquals(3, result.entities.size)
+        val mom = result.entities.single { it.id == "엄마" }
+        assertEquals(SmBadgeType.Character, mom.type)
+        assertEquals("엄마", mom.name)
+        assertEquals("진성의 방에서 신음 소리를 듣고 들어온 인물", mom.desc)
+        assertEquals(2, result.relations.size)
+    }
+
+    @Test
+    fun `repairs a value that lost its opening quote right after a colon`() {
+        // Actual failure fixture (2화 인제스트, 2026-07 — the intentionally re-saved duplicate of
+        // 1화 used to test replay): attempt 1's raw response, same "stabilized but still rejected"
+        // provenance as the key-quote fixture above. "id":지민" and "type":character" are each
+        // missing the opening quote right after the colon. The "엄마마" typo in the last relation
+        // is deliberately left as-is — it's a duplicated-character id mismatch (엄마마 vs the
+        // entity's real id 엄마), not a JSON syntax problem, so it's IngestService's unresolved-
+        // relation reporting to catch (see PartialDropRecorder), not something this parser repairs.
+        val raw = """
+            {
+              "chapter_summary": "율은 진성과 지민에 대한 이야기를 나누며 꿈을 꾸고, 이후 진성이 지민의 괴롭힘에 대한 상황을 만들어주는 역할을 하며 꿈을 꾸었다.",
+              "entities": [
+                {
+                  "id": "율",
+                  "type": "character",
+                  "name": "율",
+                  "desc": "과거의 행동을 앞으로의 선택으로 바꿀 수 있다고 조언하는 인물"
+                },
+                {
+                  "id": "진성",
+                  "type": "character",
+                  "name": "진성",
+                  "desc": "지민과의 관계에 대한 고백을 고백하며 죄책감을 느끼는 인물"
+                },
+                {
+                  "id":지민",
+                  "type":character",
+                  "name": "지민",
+                  "desc": "괴롭힘을 당한 것으로 추정되는 인물"
+                },
+                {
+                  "id": "엄마",
+                  "type": "character",
+                  "name": "엄마",
+                  "desc": "아들을 흔들며 진성을 걱정하는 인물"
+                }
+              ],
+              "relations": [
+                {"from": "율", "to": "진성"},
+                {"from": "진성", "to": "지민"},
+                {"from": "진성", "to": "엄마마"}
+              ]
+            }
+        """.trimIndent()
+
+        val result = IngestParser.parse(raw)
+
+        assertEquals(4, result.entities.size)
+        val jimin = result.entities.single { it.id == "지민" }
+        assertEquals(SmBadgeType.Character, jimin.type)
+        assertEquals("지민", jimin.name)
+        assertEquals(3, result.relations.size)
+        // The typo'd id passes straight through the parser unresolved, as documented above.
+        assertEquals("엄마마", result.relations[2].to)
+    }
+
+    @Test
+    fun `repairs a lone orphan comma left over after a value with nothing else on the line`() {
+        // Actual failure fixture (v2 run 1/5 of IdConsistencyPromptSmokeTest's predecessor,
+        // 2026-07): a value immediately followed by an isolated comma on its own line before the
+        // next real key — `"id": "율",\n    ,\n    "type": "character",`. Before
+        // ORPHAN_COMMA_REGEX existed, this made the attempt fail outright (a different shape than
+        // the stray-quote-comma case: no quote sits between the two commas here, just whitespace).
+        val raw = """
+            {
+              "chapter_summary": "율과 진성은 과거의 행동에 대한 갈등을 겪으며, 꿈을 통해 지민의 괴롭힘 상황을 상상으로 만들어내고 이를 통해 감정화한다.",
+              "entities": [
+                {
+                  "id": "율",
+                  ,
+                  "type": "character",
+
+                  "name": "율",
+                  "desc": "과거의 행동을 긍정적으로 변화시키고자 노력하는 인물"
+                },
+                {
+                  "id": "진성",
+                  ,
+                  "type": "character",
+                  "name": "진성",
+                  "desc": "과거의 행동에 대해 죄책감을 느끼며 지민에게 연락을 시도하는 인물"
+                },
+                {
+                  "id": "엄마",
+                  ,
+                  "type": "character",
+                  "name": "엄마",
+                  "desc": "진성의 어머니로, 지민의 상황에 대해 걱정하며 진성을 위로하는 인물"
+                }
+              ],
+              "relations": [
+                {
+                  "from": "율",
+                  ,
+                  "to": "진성"
+                }
+              ]
+            }
+        """.trimIndent()
+
+        val result = IngestParser.parse(raw)
+
+        assertEquals(3, result.entities.size)
+        val yul = result.entities.single { it.id == "율" }
+        assertEquals(SmBadgeType.Character, yul.type)
+        assertEquals("율", yul.name)
+        assertEquals(1, result.relations.size)
+        assertEquals("율", result.relations[0].from)
+        assertEquals("진성", result.relations[0].to)
+    }
 }

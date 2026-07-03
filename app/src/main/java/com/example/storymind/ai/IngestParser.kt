@@ -58,6 +58,31 @@ object IngestParser {
     private val REAL_KEY_LOOKAHEAD_REGEX = Regex("^\"[^\"]*\"\\s*:")
 
     /**
+     * Matches a key name that lost its opening quote right after a comma — e.g.
+     * `"type": "character",name": "엄마"` (2026-07 1화 incident: attempt 1's `name` key). The
+     * closing quote survives (it belongs to the value that follows), only the opening one before
+     * the key is missing. Constrained to ASCII `[a-zA-Z_]` since every key in [IngestSchema]'s
+     * output (`id`/`type`/`name`/`desc`/`from`/`to`/`entities`/`relations`/`chapter_summary`) is
+     * plain ASCII — Korean text can never appear where a key name belongs, so this can't misfire
+     * on a value fragment that happens to sit after a comma.
+     */
+    private val MISSING_KEY_OPEN_QUOTE_REGEX = Regex(",(\\s*)([a-zA-Z_][a-zA-Z0-9_]*)\":")
+
+    /**
+     * Matches a value that lost its opening quote right after a colon — e.g. `"id":지민"` or
+     * `"type":character"` (2026-07 2화 incident: attempt 1's `id`/`type` values). The negative
+     * lookahead excludes a colon already followed by whitespace, `"`, `{`, or `[` — i.e. every
+     * already-well-formed value (spaced-and-quoted, compact-and-quoted, or the start of a nested
+     * object/array) — so this only fires on the specific broken shape. Independent of
+     * [MISSING_KEY_OPEN_QUOTE_REGEX]: one targets the position right after a comma (before a key),
+     * the other right after a colon (before a value); neither's replacement can create the other's
+     * trigger shape, so pass order between them doesn't matter for correctness. Doesn't need to
+     * (and can't safely) handle a value containing an escaped `"` — no such value has been observed
+     * from this schema, and the lazy `[^"]+?` would stop early on one if it existed.
+     */
+    private val MISSING_VALUE_OPEN_QUOTE_REGEX = Regex(":(?!\\s|[\"{\\[])([^\"]+?)\"")
+
+    /**
      * Matches a doubled `}}` right before a `,` or `]` — Gemma sometimes tacks on one extra
      * closing brace when it writes an entity/relation object inline on a single line, e.g.
      * `"desc": "..." }},`. [IngestSchema]'s entities/relations objects never nest, so two
@@ -85,6 +110,20 @@ object IngestParser {
      * comma is always safe.
      */
     private val STRAY_QUOTE_COMMA_REGEX = Regex(",\\s*\"\\s*,")
+
+    /**
+     * Matches a lone comma sitting entirely by itself — nothing but whitespace before the next
+     * real comma — which Gemma occasionally emits right after a value with nothing else on the
+     * line, e.g. `"id": "율",\n    ,\n    "type": "character",` (found while observing
+     * [IdMismatchRateSmokeTest]'s predecessor, 2026-07). Unlike [STRAY_QUOTE_COMMA_REGEX], there's
+     * no stray quote character between the two commas here — just whitespace — so a second,
+     * simpler comma-collapse pass is needed; the two patterns don't overlap (this one requires
+     * *only* whitespace between the commas, [STRAY_QUOTE_COMMA_REGEX] requires a `"` there), so
+     * neither can ever fire on the other's match. Two commas separated only by whitespace can
+     * never be legitimate JSON (a real second comma always follows a complete value), so
+     * collapsing the pair to one is always safe.
+     */
+    private val ORPHAN_COMMA_REGEX = Regex(",\\s*,")
 
     private val EMPTY = ParsedIngest(chapterSummary = "", entities = emptyList(), relations = emptyList())
 
@@ -189,13 +228,25 @@ object IngestParser {
         stripTrailingCommas(
             insertMissingCommas(
                 collapseDoubleCloseBraces(
-                    collapseDoubleOpenBraces(collapseStrayQuoteCommas(repairBareKeys(json)))
+                    collapseDoubleOpenBraces(
+                        collapseOrphanCommas(
+                            collapseStrayQuoteCommas(
+                                repairMissingValueOpenQuotes(repairMissingKeyOpenQuotes(repairBareKeys(json)))
+                            )
+                        )
+                    )
                 )
             )
         )
 
     private fun insertMissingCommas(json: String): String =
         json.replace(MISSING_COMMA_REGEX, "$1,$2")
+
+    private fun repairMissingKeyOpenQuotes(json: String): String =
+        json.replace(MISSING_KEY_OPEN_QUOTE_REGEX, ",$1\"$2\":")
+
+    private fun repairMissingValueOpenQuotes(json: String): String =
+        json.replace(MISSING_VALUE_OPEN_QUOTE_REGEX, ": \"$1\"")
 
     private fun repairBareKeys(json: String): String =
         BARE_KEY_REGEX.replace(json) { match ->
@@ -209,6 +260,9 @@ object IngestParser {
 
     private fun collapseStrayQuoteCommas(json: String): String =
         json.replace(STRAY_QUOTE_COMMA_REGEX, ",")
+
+    private fun collapseOrphanCommas(json: String): String =
+        json.replace(ORPHAN_COMMA_REGEX, ",")
 
     private fun collapseDoubleOpenBraces(json: String): String =
         json.replace(DOUBLE_OPEN_BRACE_REGEX, "{")

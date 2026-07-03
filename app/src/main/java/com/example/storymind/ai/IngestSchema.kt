@@ -24,8 +24,27 @@ object IngestSchema {
      * a separate constrained-decoding investigation), so every instruction line still carried its
      * 12-space source indent whenever a chapter had `existingEntities` or more than one paragraph
      * — i.e. essentially every chapter past the first. Chapters stamped with v1 were ingested from
-     * that indentation-polluted prompt, not today's clean one. */
-    const val PROMPT_VERSION: Int = 2
+     * that indentation-polluted prompt, not today's clean one.
+     *
+     * v2 -> v3: added an id-consistency rule bullet ("entities에서 정한 id는 relations에서도 동일한
+     * 문자열로만 참조한다"), an experimental attempt to reduce at the source what
+     * [IngestService]/[PartialDropRecorder] can only detect after the fact — the 2026-07 1화
+     * incident, where Gemma defined "진성" as an entity but then wrote two of its own relations
+     * against the truncated id "성". [IdConsistencyPromptSmokeTest] measured it on the actual 1화
+     * manuscript (5 generations per variant): v2 (no rule) mismatched 2/5, v3 (with the rule)
+     * mismatched **4/5** — no improvement, and directionally worse in that sample. See
+     * `docs/entity-relation-id-mismatch-incident.md`'s "후속 조치" section.
+     *
+     * v3 -> v4: withdrew that rule bullet, per the v3 measurement above. Reusing the v3 number for
+     * this would erase the fact that a real prompt (the one actually measured) once existed at
+     * that version — v4 is a *different* prompt (the rule removed), not v2 restored-and-renumbered,
+     * so it gets its own number even though its text is byte-for-byte what v2 was. The
+     * entities-relations id-consistency problem itself isn't considered solved — it's now handled
+     * post-hoc instead of at the prompt: [IngestService.generateResult] retries an unresolved
+     * relation like a soft parse failure (shares the existing attempt budget, accepts on the last
+     * attempt), and [IngestService.shadowMatchDescription] records what a conservative recovery
+     * would have matched, in shadow mode only, as data toward a future merge-time fix. */
+    const val PROMPT_VERSION: Int = 4
 
     /** Placeholder tokens (plain text, not `$`-based) inserted into the template before
      * [String.trimIndent] runs and swapped for the real multi-line blocks after. Interpolating

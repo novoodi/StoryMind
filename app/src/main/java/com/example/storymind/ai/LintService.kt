@@ -56,7 +56,7 @@ class LintService(private val engine: OnDeviceTextEngine) {
     }
 
     /**
-     * Unlike [IngestService.generateParsed], a final parse failure here returns null instead of
+     * Unlike [IngestService], a final parse failure here returns null instead of
      * falling back to an empty-but-"successful" result: [lint] needs to tell that failure apart
      * from a genuine "nothing wrong" verdict, which an ingest caller never had to distinguish
      * (a chapter with truly no entities is legitimate; a lint pass that never produced usable
