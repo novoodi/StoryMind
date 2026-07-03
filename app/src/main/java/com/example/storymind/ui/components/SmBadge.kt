@@ -25,7 +25,7 @@ import androidx.compose.ui.unit.sp
 import com.example.storymind.ui.theme.Pretendard
 import com.example.storymind.ui.theme.SmColors
 
-enum class SmBadgeType { Character, Place, Item, Event, Orphan, Draft, Complete, New }
+// SmBadgeType은 도메인 공용 enum이라 :core commonMain으로 이동했다 (같은 패키지 유지).
 enum class SmBadgeSize { Sm, Lg }
 
 private data class BadgeSpec(val bg: Color, val color: Color, val label: String)

@@ -2,25 +2,8 @@ package com.example.storymind.data
 
 import com.example.storymind.ui.components.SmBadgeType
 
-/** A Second Brain graph node. Position is a 0–100 percentage of the canvas. */
-data class GraphNode(
-    val id: String,
-    val type: SmBadgeType,
-    val label: String,
-    val x: Float,
-    val y: Float,
-)
-
-/** An edge connecting two node ids in the Second Brain graph. */
-data class GraphEdge(val from: String, val to: String)
-
-data class WikiEntry(
-    val id: String,
-    val type: SmBadgeType,
-    val name: String,
-    val desc: String,
-    val chapter: String,
-)
+// GraphNode/GraphEdge/WikiEntry는 ai/가 참조하는 도메인 타입이라 :core commonMain의
+// DomainModels.kt로 이동했다 (같은 패키지 유지). Chapter는 ai/가 참조하지 않아 남긴다.
 
 /** One chapter of the manuscript. [title] is optional — chapters after the first often
  * continue the same episode without a new heading. */
