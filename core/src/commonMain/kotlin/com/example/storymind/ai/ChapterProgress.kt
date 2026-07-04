@@ -13,60 +13,84 @@ data class ChapterProgress(
 )
 
 /**
- * Folds one chapter's [IngestResult] into the running [ChapterProgress]: entities that already
- * exist (same id, thanks to [IngestService]'s name-based remap) get this chapter's description
- * added as a new dated line onto their wiki entry — a running log of how the entity was
- * described each time it appeared — rather than losing earlier chapters' descriptions, while
- * `chapter` is refreshed to the newest appearance. Node position is kept for existing ids; only
- * ids not seen before are laid out. The orphan set is recomputed over the full accumulated edge
- * set, not just this chapter's.
+ * Folds one chapter's [IngestResult] into the running [ChapterProgress]. [chapterLabel] is the
+ * chapter being merged (e.g. "3화") — passed explicitly rather than read off the result's entries
+ * so a re-ingest that produces *no* entities still knows which chapter's contribution to retract.
  *
- * The per-chapter line is **replaced, not appended**, when a line for the same chapter label
- * already exists: re-saving an already-ingested chapter (a completely ordinary flow — save, keep
- * writing the same chapter, save again) re-runs its ingest, and appending would stack a duplicate
- * "N화: ..." line onto every entity of that chapter each time. Replacement is the strongest
- * correction an incremental merge can make — stale *edges/nodes* contributed by the chapter's
- * previous version can't be subtracted here, because the DB keeps only the latest accumulated
- * snapshot with no per-chapter provenance to know what to remove; those are exactly what the
- * full rebuild ([com.example.storymind.work.ReplayWorker]) exists to clean up (rule 1).
+ * The accumulated wiki desc is one line per chapter ("N화: ..."), which doubles as this fold's
+ * per-chapter provenance for entities. On every merge, [chapterLabel]'s line is first stripped
+ * from **every** existing entry, then re-added only for entries the new result still mentions:
+ * - A first-time ingest of a chapter strips nothing (no entry has its line yet) and just appends —
+ *   the ordinary forward case, unchanged.
+ * - A **re-ingest** (save an already-ingested chapter, keep writing, save again) replaces that
+ *   chapter's line instead of stacking a duplicate onto every entity, and — the reason strip runs
+ *   over *all* entries, not just the incoming ones — drops an entity the chapter no longer mentions
+ *   the moment its last remaining line is gone (that chapter was its sole source). Its node is
+ *   dropped with it, and any edge left dangling to a removed node is filtered out below.
  *
- * [incoming.desc][WikiEntry.desc] is flattened to a single line first: the accumulated format is
- * strictly one line per chapter ("N화: ..."), and both this function's own replacement filter and
- * [com.example.storymind.work.LintWorker]'s per-chapter history split identify a chapter's line by
- * its `"N화: "` prefix — a model-emitted newline inside one desc would otherwise smuggle
- * prefix-less continuation lines into the history, which the lint pass then mistakes for earlier
- * chapters' facts (self-confirmation) and a later re-ingest can never replace.
+ * The one stale case this can't reach: an edge whose *both* endpoints still exist but which only
+ * this chapter's previous ingest produced — there's no per-edge chapter provenance to subtract it,
+ * so a full rebuild ([com.example.storymind.work.ReplayWorker]) remains the tool for that narrow
+ * case (rule 1). A surviving entry dropped from its most-recent chapter keeps its old `chapter`
+ * ("last appearance") field rather than recomputing it — display-only, and rebuild corrects it.
+ *
+ * [incoming.desc][WikiEntry.desc] is flattened to a single line first: a model-emitted newline
+ * inside one desc would otherwise smuggle prefix-less continuation lines into the accumulation,
+ * which both this strip/replace filter and [com.example.storymind.work.LintWorker]'s per-chapter
+ * history split (keyed on the `"N화: "` prefix) would then mis-attribute.
+ *
+ * Node position is kept for surviving ids; only ids not seen before are laid out (by global
+ * accumulation index, so incremental merge and rebuild agree — see [layoutNodes]). The orphan set
+ * is recomputed over the full accumulated edge set, not just this chapter's.
  */
-fun ChapterProgress.merge(result: IngestResult): ChapterProgress {
-    val wikiById = wikiEntries.associateBy { it.id }.toMutableMap()
-    result.wikiEntries.forEach { incoming ->
-        val existing = wikiById[incoming.id]
-        val chapterLine = "${incoming.chapter}: ${incoming.desc.flattenToSingleLine()}"
-        val accumulatedDesc = if (existing == null) {
-            chapterLine
+fun ChapterProgress.merge(result: IngestResult, chapterLabel: String): ChapterProgress {
+    val chapterPrefix = "$chapterLabel: "
+    val incomingById = result.wikiEntries.associateBy { it.id }
+    val existingById = wikiEntries.associateBy { it.id }
+
+    val mergedWiki = (existingById.keys + incomingById.keys).mapNotNull { id ->
+        val existing = existingById[id]
+        val incoming = incomingById[id]
+        // 이 화의 줄을 먼저 걷어낸다: 재인제스트면 옛 줄을 지우고(아래에서 새로 붙임), 이 화가
+        // 더는 언급하지 않는 엔티티는 이 화가 유일 출처였을 때 줄이 0개가 되어 사라진다.
+        val keptLines = existing?.desc?.split("\n").orEmpty().filterNot { it.startsWith(chapterPrefix) }
+        val lines = if (incoming != null) {
+            keptLines + "$chapterPrefix${incoming.desc.flattenToSingleLine()}"
         } else {
-            val earlierChapterLines = existing.desc
-                .split("\n")
-                .filterNot { it.startsWith("${incoming.chapter}: ") }
-            (earlierChapterLines + chapterLine).joinToString("\n")
+            keptLines
         }
-        wikiById[incoming.id] = incoming.copy(desc = accumulatedDesc)
+        if (lines.isEmpty()) return@mapNotNull null
+        // incoming이 있으면 그것을 기준으로(새 타입/이름/이번 화 등장), 없으면 기존 엔티티를
+        // 유지한다. `chapter`(마지막 등장)는 incoming이 있을 때만 갱신한다.
+        val template = incoming ?: existing!!
+        template.copy(
+            desc = lines.joinToString("\n"),
+            chapter = incoming?.chapter ?: existing!!.chapter,
+        )
     }
 
+    val survivingIds = mergedWiki.mapTo(mutableSetOf()) { it.id }
     val existingNodeIds = nodes.mapTo(mutableSetOf()) { it.id }
-    // existingCount를 넘겨 새 노드가 전역 누적 인덱스로 배치되게 한다 — 화별 상대 인덱스로
-    // 배치하면 화마다 같은 자리들이 재사용되어 노드가 포개진다(NodeLayout KDoc 참고).
-    val newNodes = layoutNodes(result.nodes.filter { it.id !in existingNodeIds }, existingCount = nodes.size)
-    val mergedNodes = nodes + newNodes
-
-    val mergedEdges = (edges + result.edges).distinct()
+    val survivingExistingNodes = nodes.filter { it.id in survivingIds }
+    // 새로 등장한 id만 배치. existingCount에 살아남은 기존 노드 수를 넘겨 전역 누적 인덱스로
+    // 배치되게 한다(포개짐 방지, NodeLayout KDoc). 재인제스트로 노드가 줄어도 리빌드는 각 화를
+    // 한 번씩 전진 병합하므로(제거 없음) survivingExistingNodes.size == nodes.size라 결정성 유지.
+    val newNodes = layoutNodes(
+        result.nodes.filter { it.id in survivingIds && it.id !in existingNodeIds },
+        existingCount = survivingExistingNodes.size,
+    )
+    val mergedNodes = survivingExistingNodes + newNodes
 
     val knownIds = mergedNodes.mapTo(mutableSetOf()) { it.id }
+    // 제거된 엔티티를 가리키던 엣지는 함께 떨어뜨린다. 양 끝이 모두 살아있지만 이 화만
+    // 만들었던 엣지는 provenance가 없어 남는다(위 KDoc의 좁은 예외 — 재구축이 정리).
+    val mergedEdges = (edges + result.edges).distinct().filter { it.from in knownIds && it.to in knownIds }
+
     val connectedIds = mergedEdges.flatMapTo(mutableSetOf()) { listOf(it.from, it.to) }
     val orphanIds = knownIds - connectedIds
 
     return ChapterProgress(
-        wikiEntries = wikiById.values.toList(),
+        wikiEntries = mergedWiki,
         nodes = mergedNodes,
         edges = mergedEdges,
         orphanIds = orphanIds,

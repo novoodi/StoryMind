@@ -26,7 +26,7 @@ class ChapterProgressTest {
             orphanIds = setOf("yul"),
         )
 
-        val merged = progress.merge(nextChapter)
+        val merged = progress.merge(nextChapter, "2장")
 
         assertEquals(1, merged.nodes.size)
         assertEquals(12f, merged.nodes[0].x)
@@ -53,7 +53,7 @@ class ChapterProgressTest {
             orphanIds = setOf("yul"),
         )
 
-        val merged = progress.merge(reIngestedChapter1)
+        val merged = progress.merge(reIngestedChapter1, "1장")
 
         assertEquals("2장: 2장 설명\n1장: 수정된 설명", merged.wikiEntries.single { it.id == "yul" }.desc)
     }
@@ -74,7 +74,7 @@ class ChapterProgressTest {
             orphanIds = setOf("yul"),
         )
 
-        val merged = progress.merge(reIngestedChapter1)
+        val merged = progress.merge(reIngestedChapter1, "1장")
 
         assertEquals("11장: 십일장 설명\n1장: 새 일장 설명", merged.wikiEntries.single { it.id == "yul" }.desc)
     }
@@ -90,7 +90,7 @@ class ChapterProgressTest {
             orphanIds = setOf("yul"),
         )
 
-        val merged = progress.merge(chapter)
+        val merged = progress.merge(chapter, "1장")
 
         assertEquals("1장: 첫 줄 둘째 줄", merged.wikiEntries.single { it.id == "yul" }.desc)
     }
@@ -111,7 +111,7 @@ class ChapterProgressTest {
             orphanIds = emptySet(),
         )
 
-        val merged = progress.merge(nextChapter)
+        val merged = progress.merge(nextChapter, "2장")
 
         assertEquals(2, merged.nodes.size)
         assertEquals(50f, merged.nodes.single { it.id == "yul" }.x)
@@ -119,5 +119,64 @@ class ChapterProgressTest {
         assertTrue(jinseongNode.x != 0f || jinseongNode.y != 0f)
         assertEquals(1, merged.edges.size)
         assertTrue(merged.orphanIds.isEmpty())
+    }
+
+    @Test
+    fun `re-ingesting a chapter drops an entity it no longer mentions and its dangling edge`() {
+        // Chapter 1 originally introduced both 율 and 그림자 (연결됨). A re-ingest of chapter 1
+        // whose new text only mentions 율 must drop 그림자 entirely — it was 1장's sole entity —
+        // along with its node and the now-dangling 율→그림자 edge.
+        val progress = ChapterProgress(
+            wikiEntries = listOf(
+                WikiEntry("yul", SmBadgeType.Character, "율", "1장: 주인공", "1장"),
+                WikiEntry("shadow", SmBadgeType.Event, "그림자", "1장: 율의 트라우마", "1장"),
+            ),
+            nodes = listOf(
+                GraphNode("yul", SmBadgeType.Character, "율", 30f, 30f),
+                GraphNode("shadow", SmBadgeType.Event, "그림자", 70f, 70f),
+            ),
+            edges = listOf(GraphEdge("yul", "shadow")),
+            orphanIds = emptySet(),
+        )
+        val reIngest = IngestResult(
+            chapterSummary = "1장 요약 (수정판)",
+            wikiEntries = listOf(WikiEntry("yul", SmBadgeType.Character, "율", "수정된 주인공 설명", "1장")),
+            nodes = listOf(GraphNode("yul", SmBadgeType.Character, "율", 0f, 0f)),
+            edges = emptyList(),
+            orphanIds = setOf("yul"),
+        )
+
+        val merged = progress.merge(reIngest, "1장")
+
+        assertEquals(setOf("yul"), merged.wikiEntries.mapTo(mutableSetOf()) { it.id })
+        assertEquals(setOf("yul"), merged.nodes.mapTo(mutableSetOf()) { it.id })
+        assertTrue("dangling edge to the removed entity must be pruned", merged.edges.isEmpty())
+        assertEquals("1장: 수정된 주인공 설명", merged.wikiEntries.single().desc)
+        // 위치 보존: 재인제스트에서도 살아남은 노드의 좌표는 유지된다.
+        assertEquals(30f, merged.nodes.single().x)
+    }
+
+    @Test
+    fun `re-ingesting a chapter keeps an entity that other chapters still mention`() {
+        // 율 appears in both 1장 and 2장. Re-ingesting 2장 without 율 must keep 율 (still in 1장),
+        // dropping only its 2장 line — not the whole entity.
+        val progress = ChapterProgress(
+            wikiEntries = listOf(WikiEntry("yul", SmBadgeType.Character, "율", "1장: 주인공\n2장: 재등장", "2장")),
+            nodes = listOf(GraphNode("yul", SmBadgeType.Character, "율", 40f, 40f)),
+            edges = emptyList(),
+            orphanIds = setOf("yul"),
+        )
+        val reIngestChapter2 = IngestResult(
+            chapterSummary = "2장 요약 (율 빠짐)",
+            wikiEntries = listOf(WikiEntry("mom", SmBadgeType.Character, "엄마", "새 인물", "2장")),
+            nodes = listOf(GraphNode("mom", SmBadgeType.Character, "엄마", 0f, 0f)),
+            edges = emptyList(),
+            orphanIds = setOf("mom"),
+        )
+
+        val merged = progress.merge(reIngestChapter2, "2장")
+
+        assertEquals(setOf("yul", "mom"), merged.wikiEntries.mapTo(mutableSetOf()) { it.id })
+        assertEquals("1장: 주인공", merged.wikiEntries.single { it.id == "yul" }.desc)
     }
 }

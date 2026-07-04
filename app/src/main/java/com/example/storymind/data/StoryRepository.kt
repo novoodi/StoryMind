@@ -83,7 +83,7 @@ class StoryRepository(private val db: StoryDatabase) {
         val chapter = dao.loadChapter(chapterIndex)
         if (chapter == null || chapter.body != ingestedBody) return@withTransaction false
 
-        val merged = dao.loadProgress().toDomain().merge(result)
+        val merged = dao.loadProgress().toDomain().merge(result, chapter.label)
         dao.replaceProgress(merged.toEntities())
         dao.markIngested(chapterIndex, engine, promptVersion)
         true
