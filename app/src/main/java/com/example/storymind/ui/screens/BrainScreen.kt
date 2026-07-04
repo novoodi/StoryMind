@@ -84,6 +84,29 @@ private fun filterToType(label: String): SmBadgeType? = when (label) {
 
 private val FILTER_LABELS = listOf("전체", "인물", "장소", "소품", "사건")
 
+/** 모든 필터 칩 행의 "필터 없음" 리셋 라벨 — 타입 칩과 화 칩이 같은 의미로 공유한다. */
+private const val ALL_LABEL = "전체"
+
+/** 레거시(v2→v3 마이그레이션) 엣지의 provenance는 센티넬 "?"다([GraphEdge.chapters]). 화 칩
+ * 줄에서는 사람이 읽는 [SENTINEL_CHAPTER_LABEL]로 보여주고, 강조 시 다시 이 토큰으로 매칭한다. */
+private const val SENTINEL_CHAPTER = "?"
+private const val SENTINEL_CHAPTER_LABEL = "출처 미상"
+
+/**
+ * 화 필터 칩 라벨을 엣지의 provenance([GraphEdge.chapters])에서 파생한다. 화 목록을 따로 받지
+ * 않고 엣지에서 뽑는 이유: 필터의 목적이 "엣지를 화 단위로 강조"라 엣지가 곧 SSOT이고, 실제
+ * 엣지가 참조하는 화만 칩으로 떠 빈 화 칩이 안 생긴다. "N화"는 **선행 숫자로 정렬**한다 —
+ * 문자열 정렬이면 "11화"가 "2화" 앞에 오는 함정을 피하려고. 레거시 센티넬 "?"가 하나라도 있으면
+ * [SENTINEL_CHAPTER_LABEL] 칩을 맨 뒤에 붙인다(전체 재구축하면 실제 화 provenance로 바뀌며
+ * 자연히 사라지는 과도기 칩). 리셋 라벨 "전체"는 UI가 앞에 붙이므로 여기서는 반환하지 않는다.
+ */
+internal fun chapterFilterLabels(edges: List<GraphEdge>): List<String> {
+    val all = edges.flatMapTo(mutableSetOf()) { it.chapters }
+    val real = all.filter { it != SENTINEL_CHAPTER }
+        .sortedBy { label -> label.takeWhile { it.isDigit() }.toIntOrNull() ?: Int.MAX_VALUE }
+    return if (SENTINEL_CHAPTER in all) real + SENTINEL_CHAPTER_LABEL else real
+}
+
 /** The Second Brain relationship graph — mirrors the prototype's BrainScreen. */
 @Composable
 fun BrainScreen(
@@ -95,7 +118,8 @@ fun BrainScreen(
     rebuildBanner: (@Composable () -> Unit)? = null,
     onNodeMoved: (id: String, x: Float, y: Float) -> Unit = { _, _, _ -> },
 ) {
-    var filter by remember { mutableStateOf("전체") }
+    var filter by remember { mutableStateOf(ALL_LABEL) }
+    var chapterFilter by remember { mutableStateOf(ALL_LABEL) }
     var selected by remember { mutableStateOf<String?>(null) }
     val positions = remember(nodes) {
         mutableStateMapOf<String, Offset>().apply {
@@ -113,41 +137,31 @@ fun BrainScreen(
     val visibleEdges = edges.filter { it.from in visibleIds && it.to in visibleIds }
     val visibleSelected = selected?.takeIf { it in visibleIds }
 
+    // 화 칩은 전체 엣지에서 파생해 안정적으로 둔다(타입 필터로 칩이 사라졌다 나타나지 않게).
+    // 강조 자체는 아래 GraphCanvas가 받는 visibleEdges 위에서만 일어나 타입 필터를 존중한다.
+    // 재구축으로 선택한 화가 사라지면 highlightToken을 null로 무효화(유령 강조 방지) — 컴포지션
+    // 중 상태를 되쓰는 대신 파생값으로. "출처 미상" 칩은 다시 센티넬 토큰으로 되돌려 매칭한다.
+    val chapterChips = remember(edges) { listOf(ALL_LABEL) + chapterFilterLabels(edges) }
+    val highlightToken: String? = when {
+        chapterFilter == ALL_LABEL || chapterFilter !in chapterChips -> null
+        chapterFilter == SENTINEL_CHAPTER_LABEL -> SENTINEL_CHAPTER
+        else -> chapterFilter
+    }
+
     Column(modifier = modifier.fillMaxSize().background(SmColors.surfaceSubtle)) {
         SmToolbar(title = "세컨드 브레인")
         rebuildBanner?.invoke()
 
-        LazyRow(
-            modifier = Modifier
-                .fillMaxWidth()
-                .background(SmColors.surfaceBase)
-                .padding(vertical = 9.dp, horizontal = 15.dp),
-            horizontalArrangement = Arrangement.spacedBy(6.dp),
-        ) {
-            items(FILTER_LABELS) { f ->
-                val on = f == filter
-                Box(
-                    modifier = Modifier
-                        .clip(RoundedCornerShape(50))
-                        .background(if (on) SmColors.brand else Color.Transparent)
-                        .then(
-                            if (!on) Modifier.border(1.dp, SmColors.borderDefault, RoundedCornerShape(50))
-                            else Modifier
-                        )
-                        .clickable(indication = null, interactionSource = remember { MutableInteractionSource() }) {
-                            filter = f
-                        }
-                        .padding(horizontal = 13.dp, vertical = 5.dp),
-                ) {
-                    Text(
-                        text = f,
-                        color = if (on) Color.White else SmColors.textSecondary,
-                        fontFamily = Pretendard,
-                        fontWeight = if (on) FontWeight.Bold else FontWeight.Medium,
-                        fontSize = 12.sp,
-                    )
-                }
-            }
+        // 타입 칩(표시 대상 필터)과 화 칩(강조 오버레이)은 관심사가 달라 두 줄로 공존한다.
+        FilterChipRow(labels = FILTER_LABELS, selected = filter, onSelect = { filter = it })
+        // 화 칩은 강조할 엣지가 있을 때만("전체" 외 칩이 하나라도) 렌더. 화 선택은 노드 선택과
+        // 상호배타 — 화를 고르면 노드 선택을 풀어 두 딤 오버레이가 겹치지 않게 한다.
+        if (chapterChips.size > 1) {
+            FilterChipRow(
+                labels = chapterChips,
+                selected = chapterFilter,
+                onSelect = { chapterFilter = it; if (it != ALL_LABEL) selected = null },
+            )
         }
 
         Box(modifier = Modifier.weight(1f, fill = true)) {
@@ -158,9 +172,49 @@ fun BrainScreen(
                 wikiEntries = wikiEntries,
                 positions = positions,
                 selected = visibleSelected,
-                onSelect = { selected = it },
+                highlightChapter = highlightToken,
+                // 노드 선택도 화 강조와 상호배타 — 노드를 고르면 화 칩을 "전체"로 되돌린다.
+                onSelect = { selected = it; if (it != null) chapterFilter = ALL_LABEL },
                 onNodeMoved = onNodeMoved,
             )
+        }
+    }
+}
+
+/** 한 줄짜리 pill 필터 칩 행 — 타입 필터와 화 필터가 같은 시각 스타일을 공유하도록 추출.
+ * [selected]는 현재 켜진 라벨(둘 다 [ALL_LABEL]을 "필터 없음"으로 씀). */
+@Composable
+private fun FilterChipRow(labels: List<String>, selected: String, onSelect: (String) -> Unit) {
+    LazyRow(
+        modifier = Modifier
+            .fillMaxWidth()
+            .background(SmColors.surfaceBase)
+            .padding(vertical = 9.dp, horizontal = 15.dp),
+        horizontalArrangement = Arrangement.spacedBy(6.dp),
+    ) {
+        items(labels) { f ->
+            val on = f == selected
+            Box(
+                modifier = Modifier
+                    .clip(RoundedCornerShape(50))
+                    .background(if (on) SmColors.brand else Color.Transparent)
+                    .then(
+                        if (!on) Modifier.border(1.dp, SmColors.borderDefault, RoundedCornerShape(50))
+                        else Modifier
+                    )
+                    .clickable(indication = null, interactionSource = remember { MutableInteractionSource() }) {
+                        onSelect(f)
+                    }
+                    .padding(horizontal = 13.dp, vertical = 5.dp),
+            ) {
+                Text(
+                    text = f,
+                    color = if (on) Color.White else SmColors.textSecondary,
+                    fontFamily = Pretendard,
+                    fontWeight = if (on) FontWeight.Bold else FontWeight.Medium,
+                    fontSize = 12.sp,
+                )
+            }
         }
     }
 }
@@ -173,11 +227,17 @@ private fun GraphCanvas(
     wikiEntries: List<WikiEntry>,
     positions: androidx.compose.runtime.snapshots.SnapshotStateMap<String, Offset>,
     selected: String?,
+    highlightChapter: String?,
     onSelect: (String?) -> Unit,
     onNodeMoved: (id: String, x: Float, y: Float) -> Unit,
 ) {
     var pressed by remember { mutableStateOf<String?>(null) }
-    val focusId = selected
+    // 딤(강조) 오버레이의 두 구동원 — 노드 선택 포커스와 화 강조 — 는 상호배타다(호출부에서
+    // 보장). 화가 켜져 있으면 노드 포커스는 무시하고, 그때 강조 대상은 그 화의 provenance를
+    // 가진 엣지와 그 끝 노드들. [dimming]이 참이면(둘 중 하나라도 켜짐) 나머지를 흐리게 한다.
+    val chapterActive = highlightChapter != null
+    val focusId = if (chapterActive) null else selected
+    val dimming = chapterActive || focusId != null
     val connectedSet: Set<String>? = focusId?.let { id ->
         buildSet {
             add(id)
@@ -187,6 +247,11 @@ private fun GraphCanvas(
             }
         }
     }
+    // 화 강조 시 밝게 유지할 노드 = 강조된 엣지의 양 끝(코드가 결정, 규칙2와 무관한 표시 계산).
+    val highlightedNodeIds: Set<String> = if (chapterActive) {
+        edges.filter { highlightChapter in it.chapters }
+            .flatMapTo(mutableSetOf()) { listOf(it.from, it.to) }
+    } else emptySet()
 
     BoxWithConstraints(
         modifier = Modifier
@@ -200,16 +265,19 @@ private fun GraphCanvas(
         val heightPx = maxHeight.value * density.density
 
         androidx.compose.foundation.Canvas(modifier = Modifier.fillMaxSize()) {
-            edges.forEach { (a, b) ->
+            edges.forEach { edge ->
+                val a = edge.from
+                val b = edge.to
                 val na = positions[a] ?: return@forEach
                 val nb = positions[b] ?: return@forEach
-                val hilit = focusId == null || a == focusId || b == focusId
+                val hilit = if (chapterActive) highlightChapter in edge.chapters
+                else focusId == null || a == focusId || b == focusId
                 drawLine(
-                    color = if (hilit && focusId != null) SmColors.brand else SmColors.edgeLine,
+                    color = if (hilit && dimming) SmColors.brand else SmColors.edgeLine,
                     start = Offset(na.x / 100f * size.width, na.y / 100f * size.height),
                     end = Offset(nb.x / 100f * size.width, nb.y / 100f * size.height),
-                    strokeWidth = if (hilit && focusId != null) 2.dp.toPx() else 1.2.dp.toPx(),
-                    alpha = if (focusId != null) (if (hilit) 1f else 0.12f) else 1f,
+                    strokeWidth = if (hilit && dimming) 2.dp.toPx() else 1.2.dp.toPx(),
+                    alpha = if (dimming) (if (hilit) 1f else 0.12f) else 1f,
                 )
             }
         }
@@ -218,7 +286,8 @@ private fun GraphCanvas(
             val pos = positions[node.id] ?: Offset(node.x, node.y)
             val isSel = selected == node.id
             val isPressed = pressed == node.id
-            val hilit = focusId == null || connectedSet?.contains(node.id) == true
+            val hilit = if (chapterActive) node.id in highlightedNodeIds
+            else focusId == null || connectedSet?.contains(node.id) == true
             val visual = nodeVisual(node.type)
 
             val scale by animateFloatAsState(
@@ -226,7 +295,7 @@ private fun GraphCanvas(
                 label = "nodeScale",
             )
             val opacity by animateFloatAsState(
-                targetValue = if (focusId != null) (if (hilit) 1f else 0.18f) else 1f,
+                targetValue = if (dimming) (if (hilit) 1f else 0.18f) else 1f,
                 label = "nodeOpacity",
             )
 
