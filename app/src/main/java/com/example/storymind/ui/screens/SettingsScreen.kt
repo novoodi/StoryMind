@@ -19,10 +19,7 @@ import androidx.compose.foundation.verticalScroll
 import androidx.compose.material3.HorizontalDivider
 import androidx.compose.material3.Text
 import androidx.compose.runtime.Composable
-import androidx.compose.runtime.getValue
-import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.remember
-import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.clip
@@ -34,9 +31,20 @@ import com.example.storymind.ui.theme.Pretendard
 import com.example.storymind.ui.theme.SmColors
 
 /** App preferences — mirrors the prototype's SettingsScreen. */
+/**
+ * 앱 설정 — 프로토타입의 SettingsScreen을 반영하되, 백킹 동작이 있는 토글만 남긴다. 이전엔
+ * "설정 충돌 알림"·"위키 자동 생성" 토글이 있었으나 각각 (자동 대조 알림 기능 부재 / "자동
+ * 분석"과 중복) 아무 동작도 없어 눌러도 바뀌지 않는 고장처럼 보였다 — 제거했다. 남은
+ * 토글은 [SettingsRepository][com.example.storymind.data.SettingsRepository]로 영속되고 실제
+ * 동작에 연결된다.
+ */
 @Composable
 fun SettingsScreen(
     modifier: Modifier = Modifier,
+    spellCheck: Boolean = true,
+    onSpellCheckChange: (Boolean) -> Unit = {},
+    autoAnalyze: Boolean = true,
+    onAutoAnalyzeChange: (Boolean) -> Unit = {},
     rebuildRunning: Boolean = false,
     rebuildProgressLabel: String? = null,
     canRebuild: Boolean = false,
@@ -48,11 +56,6 @@ fun SettingsScreen(
     canRollback: Boolean = false,
     onRollback: () -> Unit = {},
 ) {
-    var spellCheck by remember { mutableStateOf(true) }
-    var autoAnalyze by remember { mutableStateOf(true) }
-    var conflictAlert by remember { mutableStateOf(true) }
-    var autoWiki by remember { mutableStateOf(false) }
-
     Column(modifier = modifier.fillMaxSize().background(SmColors.surfaceBase)) {
         SmToolbar(title = "설정")
         Column(
@@ -64,12 +67,13 @@ fun SettingsScreen(
             SectionLabel("에디터")
             SettingsRow(label = "글꼴 크기", value = "18px")
             SettingsRow(label = "줄 간격", value = "1.8")
-            SettingsRow(label = "맞춤법 검사", checked = spellCheck, onCheckedChange = { spellCheck = it })
+            SettingsRow(label = "맞춤법 검사", checked = spellCheck, onCheckedChange = onSpellCheckChange)
 
             SectionLabel("AI 기능")
-            SettingsRow(label = "자동 분석", checked = autoAnalyze, onCheckedChange = { autoAnalyze = it })
-            SettingsRow(label = "설정 충돌 알림", checked = conflictAlert, onCheckedChange = { conflictAlert = it })
-            SettingsRow(label = "위키 자동 생성", checked = autoWiki, onCheckedChange = { autoWiki = it })
+            // "자동 분석" = 저장 시 자동 인제스트. 위키/그래프는 이 인제스트의 산출물이라
+            // 예전의 "위키 자동 생성"은 이것과 같은 동작이었고, "설정 충돌 알림"에 해당하는
+            // 자동 대조 기능은 없다(설정 검사는 에디터의 수동 버튼) — 그래서 이 하나만 둔다.
+            SettingsRow(label = "자동 분석", checked = autoAnalyze, onCheckedChange = onAutoAnalyzeChange)
             // Disabled while a rebuild is already running (a second trigger would just wipe the
             // half-rebuilt progress and start over) and while the model file is missing (the wipe
             // would succeed but nothing could rebuild afterwards — see StoryViewModel.startRebuild).

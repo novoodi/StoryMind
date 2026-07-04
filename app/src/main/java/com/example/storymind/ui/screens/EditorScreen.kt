@@ -18,6 +18,7 @@ import androidx.compose.foundation.layout.width
 import androidx.compose.foundation.rememberScrollState
 import androidx.compose.foundation.shape.CircleShape
 import androidx.compose.foundation.text.BasicTextField
+import androidx.compose.foundation.text.KeyboardOptions
 import androidx.compose.foundation.verticalScroll
 import androidx.compose.material3.Text
 import androidx.compose.runtime.Composable
@@ -59,6 +60,7 @@ fun EditorScreen(
     aiStatus: SmAiStatus,
     shakeTrigger: Int,
     canAdvance: Boolean,
+    spellCheck: Boolean,
     previousChapters: List<EditorChapterSnapshot>,
     currentLabel: String,
     currentBody: String,
@@ -108,6 +110,7 @@ fun EditorScreen(
         Box(modifier = Modifier.weight(1f)) {
             EditorBody(
                 shakeTrigger = shakeTrigger,
+                spellCheck = spellCheck,
                 previousChapters = previousChapters,
                 currentLabel = currentLabel,
                 currentBody = currentBody,
@@ -192,6 +195,7 @@ private fun FirstChapterHint(modifier: Modifier = Modifier) {
 @Composable
 private fun EditorBody(
     shakeTrigger: Int,
+    spellCheck: Boolean,
     previousChapters: List<EditorChapterSnapshot>,
     currentLabel: String,
     currentBody: String,
@@ -279,6 +283,9 @@ private fun EditorBody(
                     lineHeight = 32.sp,
                 ),
                 cursorBrush = SolidColor(SmColors.brand),
+                // 설정의 "맞춤법 검사" 토글을 IME 자동 교정 힌트로 전달 — 소설 집필 중
+                // 원치 않는 자동 수정을 끌 수 있는 실제 관찰 가능한 동작이다.
+                keyboardOptions = KeyboardOptions(autoCorrectEnabled = spellCheck),
                 modifier = Modifier.fillMaxWidth().defaultMinSize(minHeight = 420.dp),
                 decorationBox = { innerTextField ->
                     if (currentBody.isEmpty() && !isFirstEverChapter) {
@@ -328,9 +335,8 @@ private fun EditorFormatBar(
             .padding(horizontal = 8.dp),
         verticalAlignment = Alignment.CenterVertically,
     ) {
-        SmIconButton(icon = SmIcons.Bold, onClick = {}, iconSize = 18.dp)
-        SmIconButton(icon = SmIcons.Italic, onClick = {}, iconSize = 18.dp)
-        SmIconButton(icon = SmIcons.Link, onClick = {}, iconSize = 18.dp)
+        // 서식(굵게/기울임/링크) 버튼은 본문이 순수 텍스트라 적용할 대상이 없어 제거했다 —
+        // 리치 텍스트 모델이 생기기 전까지는 눌러도 아무 일도 안 하는 장식일 뿐이었다.
         Spacer(Modifier.weight(1f))
         Text(
             text = "${charCount}자",

@@ -49,6 +49,8 @@ fun StoryMindApp(modifier: Modifier = Modifier) {
     val rebuildState by viewModel.rebuildState.collectAsState()
     val backupState by viewModel.backupState.collectAsState()
     val preRestoreAvailable by viewModel.preRestoreAvailable.collectAsState()
+    val autoAnalyze by viewModel.autoAnalyze.collectAsState()
+    val spellCheck by viewModel.spellCheck.collectAsState()
 
     // SAF 계약들. CreateDocument의 파일명 기본값에 날짜를 넣는 것은 launch 시점에 계산한다
     // (컴포지션 시점에 고정하면 자정을 넘긴 세션에서 어제 날짜가 제안된다).
@@ -97,6 +99,7 @@ fun StoryMindApp(modifier: Modifier = Modifier) {
                     aiStatus = uiState.aiStatus,
                     shakeTrigger = shakeTrigger,
                     canAdvance = uiState.canAdvance,
+                    spellCheck = spellCheck,
                     previousChapters = uiState.previousChapters.map {
                         EditorChapterSnapshot(label = it.label, title = it.title, body = it.body)
                     },
@@ -127,6 +130,10 @@ fun StoryMindApp(modifier: Modifier = Modifier) {
                     rebuildBanner = rebuildBanner,
                 )
                 SmTab.Settings -> SettingsScreen(
+                    spellCheck = spellCheck,
+                    onSpellCheckChange = viewModel::setSpellCheck,
+                    autoAnalyze = autoAnalyze,
+                    onAutoAnalyzeChange = viewModel::setAutoAnalyze,
                     rebuildRunning = rebuildState.running,
                     rebuildProgressLabel = "재구축 중 ${rebuildState.ingestedCount}/${rebuildState.totalCount}화",
                     canRebuild = uiState.isModelAvailable,

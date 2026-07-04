@@ -8,6 +8,7 @@ import androidx.work.WorkInfo
 import androidx.work.WorkManager
 import com.example.storymind.data.GraphEdge
 import com.example.storymind.data.GraphNode
+import com.example.storymind.data.SettingsRepository
 import com.example.storymind.data.StoryRepository
 import com.example.storymind.data.WikiEntry
 import com.example.storymind.data.backup.BackupValidation
@@ -109,7 +110,19 @@ sealed interface BackupUiState {
 class StoryViewModel(application: Application) : AndroidViewModel(application) {
 
     private val repository = StoryRepository(StoryDatabase.get(application))
+    private val settings = SettingsRepository(application)
     private val workManager = WorkManager.getInstance(application)
+
+    /** 저장 시 자동 인제스트 여부 — 설정 화면 토글이 관찰/변경하고, [saveAndIngest]가 저장
+     * 시점에 [SettingsRepository.autoAnalyze] 값을 동기로 읽어 인제스트를 걸지 결정한다. */
+    val autoAnalyze: StateFlow<Boolean> = settings.autoAnalyze
+
+    /** 에디터 자동 교정(맞춤법) 여부 — 설정 토글과 에디터 텍스트필드가 함께 관찰한다. */
+    val spellCheck: StateFlow<Boolean> = settings.spellCheck
+
+    fun setAutoAnalyze(enabled: Boolean) = settings.setAutoAnalyze(enabled)
+
+    fun setSpellCheck(enabled: Boolean) = settings.setSpellCheck(enabled)
 
     /**
      * Which work's state drives the editor's AI badge. One badge, two possible sources: the
@@ -378,6 +391,14 @@ class StoryViewModel(application: Application) : AndroidViewModel(application) {
             // stale finding for the old body would misread as a verdict on the new one.
             _lintState.value = LintUiState.Idle
             watchedLintChapterIndex.value = null
+
+            // 자동 분석 OFF: 원고 저장·canAdvance는 그대로 두고(규칙 3) 인제스트만 건너뛴다.
+            // 화는 ingested=false로 남아 나중에 재구축이나 재활성화로 채울 수 있다. 모델
+            // 미탑재와 같은 무배지(Idle) 상태로 수렴 — 둘 다 "이 화는 아직 분석 안 됨"이다.
+            if (!settings.autoAnalyze.value) {
+                _uiState.update { it.copy(aiStatus = SmAiStatus.Idle) }
+                return@launch
+            }
 
             if (!IngestEngineProvider.isModelAvailable(getApplication())) {
                 _uiState.update { it.copy(aiStatus = SmAiStatus.Idle) }
