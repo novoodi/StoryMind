@@ -92,6 +92,7 @@ sealed interface BackupUiState {
     data object Idle : BackupUiState
     data object Working : BackupUiState
     data object TxtExported : BackupUiState
+    data object MdExported : BackupUiState
     data object BackupExported : BackupUiState
     data object ExportFailed : BackupUiState
     /** 검증 통과, 사용자 확인 대기 — 스테이징 파일이 유지되고 있다. [source]는 후보가
@@ -542,6 +543,15 @@ class StoryViewModel(application: Application) : AndroidViewModel(application) {
             _backupState.value = BackupUiState.Working
             val ok = StoryBackupManager.exportManuscriptTxt(getApplication(), uri)
             _backupState.value = if (ok) BackupUiState.TxtExported else BackupUiState.ExportFailed
+        }
+    }
+
+    /** SAF [uri]로 전체 원고를 Markdown 내보내기. TXT와 같은 이유로 가드 없음. */
+    fun exportManuscriptMarkdown(uri: Uri) {
+        viewModelScope.launch {
+            _backupState.value = BackupUiState.Working
+            val ok = StoryBackupManager.exportManuscriptMarkdown(getApplication(), uri)
+            _backupState.value = if (ok) BackupUiState.MdExported else BackupUiState.ExportFailed
         }
     }
 

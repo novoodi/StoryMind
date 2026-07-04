@@ -72,6 +72,23 @@ object StoryBackupManager {
             }
         }
 
+    /** 전체 원고를 [formatManuscriptMarkdown] 형식의 단일 Markdown 파일로 내보낸다. TXT와
+     * 같은 연산·같은 "wt" 근거이며, 형식만 다르다. */
+    suspend fun exportManuscriptMarkdown(context: Context, uri: Uri): Boolean =
+        withContext(Dispatchers.IO) {
+            try {
+                val chapters = StoryDatabase.get(context).storyDao().loadChapters()
+                val text = formatManuscriptMarkdown(chapters)
+                // "wt": CreateDocument가 기존 파일을 돌려준 경우 프로바이더에 따라 "w"가
+                // truncate를 보장하지 않아, 새 내용이 더 짧으면 옛 내용 꼬리가 남을 수 있다.
+                context.contentResolver.openOutputStream(uri, "wt")?.use { out ->
+                    out.write(text.toByteArray(Charsets.UTF_8))
+                } != null
+            } catch (_: Exception) {
+                false
+            }
+        }
+
     /** DB 전체(원고 + 파생 위키/그래프)를 단일 백업 파일로 내보낸다 — 방식과 근거는 클래스
      * KDoc의 원칙 1. SAF Uri에는 파일 경로가 없어 `VACUUM INTO`가 직접 못 쓰므로 캐시의
      * 임시 파일을 거쳐 스트림 복사한다. */

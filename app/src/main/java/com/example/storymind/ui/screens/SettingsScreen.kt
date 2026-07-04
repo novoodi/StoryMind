@@ -51,6 +51,7 @@ fun SettingsScreen(
     onRebuildRequest: () -> Unit = {},
     backupBusy: Boolean = false,
     onExportTxt: () -> Unit = {},
+    onExportMd: () -> Unit = {},
     onExportBackup: () -> Unit = {},
     onImportBackup: () -> Unit = {},
     canRollback: Boolean = false,
@@ -96,6 +97,11 @@ fun SettingsScreen(
                 label = "원고 TXT 내보내기",
                 value = if (backupBusy) "처리 중" else "전체 원고를 텍스트 파일로",
                 onClick = if (backupBusy) null else onExportTxt,
+            )
+            SettingsRow(
+                label = "원고 Markdown 내보내기",
+                value = if (backupBusy) "처리 중" else "화 제목을 헤딩으로",
+                onClick = if (backupBusy) null else onExportMd,
             )
             SettingsRow(
                 label = "백업 파일 내보내기",

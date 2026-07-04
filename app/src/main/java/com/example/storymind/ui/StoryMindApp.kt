@@ -60,6 +60,9 @@ fun StoryMindApp(modifier: Modifier = Modifier) {
     val txtExportLauncher = rememberLauncherForActivityResult(
         ActivityResultContracts.CreateDocument("text/plain")
     ) { uri -> uri?.let(viewModel::exportManuscriptTxt) }
+    val mdExportLauncher = rememberLauncherForActivityResult(
+        ActivityResultContracts.CreateDocument("text/markdown")
+    ) { uri -> uri?.let(viewModel::exportManuscriptMarkdown) }
     val backupExportLauncher = rememberLauncherForActivityResult(
         ActivityResultContracts.CreateDocument("application/octet-stream")
     ) { uri -> uri?.let(viewModel::exportBackup) }
@@ -155,6 +158,7 @@ fun StoryMindApp(modifier: Modifier = Modifier) {
                     onRebuildRequest = { rebuildConfirmOpen = true },
                     backupBusy = backupState == BackupUiState.Working,
                     onExportTxt = { txtExportLauncher.launch("storymind-원고-${today()}.txt") },
+                    onExportMd = { mdExportLauncher.launch("storymind-원고-${today()}.md") },
                     onExportBackup = { backupExportLauncher.launch("storymind-backup-${today()}.db") },
                     // OpenDocument의 마임 필터가 "*/*"인 이유: .db에는 표준 마임타입이 없어
                     // 좁은 필터로는 문서 프로바이더 대부분이 방금 내보낸 백업조차 회색 처리한다.
@@ -255,6 +259,11 @@ fun StoryMindApp(modifier: Modifier = Modifier) {
                 BackupUiState.TxtExported -> BackupInfoSheet(
                     title = "원고를 내보냈어요",
                     description = "선택한 위치에 전체 원고가 텍스트 파일로 저장됐어요.",
+                    onDismiss = viewModel::dismissBackupState,
+                )
+                BackupUiState.MdExported -> BackupInfoSheet(
+                    title = "원고를 내보냈어요",
+                    description = "선택한 위치에 전체 원고가 Markdown 파일로 저장됐어요.",
                     onDismiss = viewModel::dismissBackupState,
                 )
                 BackupUiState.BackupExported -> BackupInfoSheet(
