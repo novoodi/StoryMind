@@ -40,6 +40,15 @@ interface StoryDao {
     @Query("UPDATE chapters SET ingested = 0, ingestEngine = NULL, ingestPromptVersion = NULL")
     suspend fun resetIngestProvenance()
 
+    /**
+     * 사용자 드래그가 정한 노드 위치의 영속화. 좌표 컬럼만 겨냥한 UPDATE인 이유는
+     * [markIngested]와 같다 — 이 경로가 노드의 타입/라벨을 절대 다시 쓰지 않게 한다.
+     * `merge()`가 기존 노드를 그대로 보존하므로(규칙 2 KDoc), 여기 저장된 위치는 이후
+     * 인제스트의 replaceProgress를 그대로 통과해 살아남는다.
+     */
+    @Query("UPDATE graph_nodes SET x = :x, y = :y WHERE id = :id")
+    suspend fun updateNodePosition(id: String, x: Float, y: Float)
+
     @Query("DELETE FROM wiki_entries")
     suspend fun clearWikiEntries()
 
