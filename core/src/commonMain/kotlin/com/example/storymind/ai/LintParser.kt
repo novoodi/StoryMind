@@ -60,6 +60,13 @@ object LintParser {
         ignoreUnknownKeys = true
     }
 
+    /** Same pre-repair gate as [IngestParser]'s strictJson (see that KDoc for the full rationale):
+     * everything the repair regexes target is strict-invalid, so output that strict-parses must
+     * skip them — [MISSING_COMMA_REGEX] in particular can misfire inside a valid evidence/reason
+     * string (a `"` followed by whitespace and another `"`), silently inserting a comma into
+     * model prose that gets shown to the user verbatim. */
+    private val strictJson = Json
+
     fun parse(raw: String): List<LintFinding> = parseOrNull(raw) ?: emptyList()
 
     /**
@@ -81,19 +88,28 @@ object LintParser {
         }
 
         return try {
-            val repaired = stripTrailingCommas(
-                insertMissingCommas(
-                    collapseDoubleCloseBraces(collapseDoubleOpenBraces(collapseStrayQuoteCommas(jsonText)))
+            // Already-valid output must bypass the repair chain entirely — see strictJson's KDoc.
+            val root = strictParseOrNull(jsonText) ?: run {
+                val repaired = stripTrailingCommas(
+                    insertMissingCommas(
+                        collapseDoubleCloseBraces(collapseDoubleOpenBraces(collapseStrayQuoteCommas(jsonText)))
+                    )
                 )
-            )
-            ingestLogger.d(TAG, "parse() repaired JSON: $repaired")
-            val root = json.parseToJsonElement(repaired) as? JsonObject
-                ?: throw SerializationException("Top-level JSON element is not an object: $repaired")
+                ingestLogger.d(TAG, "parse() repaired JSON: $repaired")
+                json.parseToJsonElement(repaired) as? JsonObject
+                    ?: throw SerializationException("Top-level JSON element is not an object: $repaired")
+            }
             root.toFindings()
         } catch (e: SerializationException) {
             ingestLogger.w(TAG, "Failed to parse lint JSON", e)
             null
         }
+    }
+
+    private fun strictParseOrNull(jsonText: String): JsonObject? = try {
+        strictJson.parseToJsonElement(jsonText) as? JsonObject
+    } catch (_: SerializationException) {
+        null
     }
 
     /** Extracts the substring between the first `{` and the last `}`, which discards a
