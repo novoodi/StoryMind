@@ -40,6 +40,7 @@ import com.example.storymind.ui.components.SmButton
 import com.example.storymind.ui.components.SmButtonSize
 import com.example.storymind.ui.components.SmButtonVariant
 import com.example.storymind.ui.components.SmIconButton
+import com.example.storymind.ui.components.SmPendingAnalysisBanner
 import com.example.storymind.ui.components.SmStatusBadge
 import com.example.storymind.ui.components.SmToolbar
 import com.example.storymind.ui.icons.SmIcon
@@ -61,6 +62,8 @@ fun EditorScreen(
     shakeTrigger: Int,
     canAdvance: Boolean,
     spellCheck: Boolean,
+    pendingAnalysisCount: Int,
+    onAnalyzePending: () -> Unit,
     previousChapters: List<EditorChapterSnapshot>,
     currentLabel: String,
     currentBody: String,
@@ -107,6 +110,9 @@ fun EditorScreen(
                 SmIconButton(icon = SmIcons.More, onClick = {})
             },
         )
+        // 저장됐지만 아직 분석 안 된 화가 있을 때만 뜨는 넛지 — 표시 여부(분석 중·실패·모델
+        // 없음이면 숨김)는 StoryMindApp이 결정해 count 0으로 눌러 전달한다.
+        SmPendingAnalysisBanner(pendingCount = pendingAnalysisCount, onAnalyze = onAnalyzePending)
         Box(modifier = Modifier.weight(1f)) {
             EditorBody(
                 shakeTrigger = shakeTrigger,

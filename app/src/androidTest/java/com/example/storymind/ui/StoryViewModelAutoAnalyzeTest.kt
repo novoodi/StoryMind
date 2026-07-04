@@ -87,6 +87,29 @@ class StoryViewModelAutoAnalyzeTest {
         assertEquals(0, db.storyDao().loadWikiEntries().size)
     }
 
+    @Test
+    fun pendingCount_tracksUnanalyzedChapters_andAnalyzePendingClearsThem() = runBlocking {
+        val viewModel = StoryViewModel(application).also { this@StoryViewModelAutoAnalyzeTest.viewModel = it }
+        withTimeout(TIMEOUT_MS) { viewModel.uiState.first { it.isLoaded } }
+        viewModel.setAutoAnalyze(false)
+
+        // 자동 분석 OFF로 두 화를 저장 — 둘 다 미분석 상태로 쌓인다.
+        viewModel.onBodyChange("첫 번째 화 본문.")
+        viewModel.saveAndIngest()
+        withTimeout(TIMEOUT_MS) { viewModel.uiState.first { it.canAdvance } }
+        viewModel.startNextChapter()
+        viewModel.onBodyChange("두 번째 화 본문.")
+        viewModel.saveAndIngest()
+
+        withTimeout(TIMEOUT_MS) { viewModel.pendingAnalysisCount.first { it == 2 } }
+
+        // "지금 분석" → 비파괴 resume이 두 화를 순서대로 인제스트해 미분석 수가 0으로 떨어진다.
+        viewModel.analyzePending()
+        withTimeout(TIMEOUT_MS) { viewModel.pendingAnalysisCount.first { it == 0 } }
+
+        assertEquals(2, db.storyDao().loadChapters().count { it.ingested })
+    }
+
     private companion object {
         const val TIMEOUT_MS = 10_000L
 

@@ -17,6 +17,7 @@ import androidx.compose.runtime.remember
 import androidx.compose.runtime.setValue
 import androidx.compose.ui.Modifier
 import androidx.lifecycle.viewmodel.compose.viewModel
+import com.example.storymind.ui.components.SmAiStatus
 import com.example.storymind.ui.components.SmBottomSheet
 import com.example.storymind.ui.components.SmLintResultSheet
 import com.example.storymind.ui.components.SmNavBar
@@ -51,6 +52,7 @@ fun StoryMindApp(modifier: Modifier = Modifier) {
     val preRestoreAvailable by viewModel.preRestoreAvailable.collectAsState()
     val autoAnalyze by viewModel.autoAnalyze.collectAsState()
     val spellCheck by viewModel.spellCheck.collectAsState()
+    val pendingAnalysisCount by viewModel.pendingAnalysisCount.collectAsState()
 
     // SAF 계약들. CreateDocument의 파일명 기본값에 날짜를 넣는 것은 launch 시점에 계산한다
     // (컴포지션 시점에 고정하면 자정을 넘긴 세션에서 어제 날짜가 제안된다).
@@ -95,11 +97,21 @@ fun StoryMindApp(modifier: Modifier = Modifier) {
     Column(modifier = modifier.fillMaxSize().statusBarsPadding()) {
         Box(modifier = Modifier.fillMaxSize().weight(1f, fill = true)) {
             when (tab) {
+                // 미분석 화 배너는 "지금 손댈 수 있고, 손댈 필요가 있는" 유휴 상태에서만 뜬다:
+                // 분석/재구축이 돌고 있으면(그 화들이 처리 중) 숨기고, 실패(Warning)면 이미
+                // "다시 시도" 버튼이 같은 resume을 제공하므로 중복 노출을 피하며, 모델이 없으면
+                // 분석 자체가 불가능하다. 이 게이트를 통과 못 하면 count 0으로 눌러 배너를 끈다.
                 SmTab.Editor -> EditorScreen(
                     aiStatus = uiState.aiStatus,
                     shakeTrigger = shakeTrigger,
                     canAdvance = uiState.canAdvance,
                     spellCheck = spellCheck,
+                    pendingAnalysisCount = if (
+                        !rebuildState.running &&
+                        uiState.isModelAvailable &&
+                        (uiState.aiStatus == SmAiStatus.Idle || uiState.aiStatus == SmAiStatus.Done)
+                    ) pendingAnalysisCount else 0,
+                    onAnalyzePending = viewModel::analyzePending,
                     previousChapters = uiState.previousChapters.map {
                         EditorChapterSnapshot(label = it.label, title = it.title, body = it.body)
                     },

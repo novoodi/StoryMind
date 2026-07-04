@@ -32,6 +32,7 @@ import kotlinx.coroutines.flow.filterNotNull
 import kotlinx.coroutines.flow.first
 import kotlinx.coroutines.flow.flatMapLatest
 import kotlinx.coroutines.flow.flowOf
+import kotlinx.coroutines.flow.map
 import kotlinx.coroutines.flow.stateIn
 import kotlinx.coroutines.flow.update
 import kotlinx.coroutines.launch
@@ -165,6 +166,20 @@ class StoryViewModel(application: Application) : AndroidViewModel(application) {
      * 재시작되므로, 프로세스당 한 번 init에서 읽으면 충분하다. */
     private val _preRestoreAvailable = MutableStateFlow(false)
     val preRestoreAvailable: StateFlow<Boolean> = _preRestoreAvailable
+
+    /**
+     * Non-blank chapters that have no ingested wiki behind them yet — the count the editor's
+     * "분석 안 된 화 n개" banner reports. Grows whenever a chapter is saved without being analyzed:
+     * auto-analyze off, the model absent at save time, or a chapter saved during a running rebuild.
+     * Read straight from the chapters table (not WorkManager) so it survives process death and can
+     * never disagree with what a resume would actually pick up — same source [ReplayWorker] itself
+     * reads. The banner's *visibility* gate (nothing running, model present, not already showing a
+     * failure badge) lives in the composable, which already holds aiStatus/rebuild/model state;
+     * this flow is only the count.
+     */
+    val pendingAnalysisCount: StateFlow<Int> = repository.observeChapters()
+        .map { chapters -> chapters.count { it.body.isNotBlank() && !it.ingested } }
+        .stateIn(viewModelScope, SharingStarted.Eagerly, 0)
 
     /** Brain/Wiki rebuild banner; also read by [saveAndIngest] to keep the badge on the replay
      * chain while a rebuild is running (the per-save worker defers to it anyway). */
@@ -430,7 +445,26 @@ class StoryViewModel(application: Application) : AndroidViewModel(application) {
      */
     fun retryIngest() {
         if (_uiState.value.aiStatus != SmAiStatus.Warning) return
+        resumeAnalysis()
+    }
 
+    /**
+     * Analyze every chapter that was saved without being ingested — the editor's "지금 분석"
+     * action next to the "분석 안 된 화 n개" banner. Same non-destructive resume as [retryIngest]
+     * (it ingests all pending chapters in order via [ReplayWorker]), just reached from an
+     * idle-but-incomplete state instead of a FAILED one: chapters pile up unanalyzed when
+     * auto-analyze is off or the model was missing at save time, and a full rebuild would be the
+     * only other route — needlessly re-ingesting everything already done. Guarded on model
+     * availability (the banner is already hidden without it; this is the non-UI backstop).
+     */
+    fun analyzePending() {
+        if (!_uiState.value.isModelAvailable) return
+        resumeAnalysis()
+    }
+
+    /** Shared by [retryIngest]/[analyzePending]: enqueue the pending-chapter resume and point the
+     * badge at the replay chain. The two differ only in the precondition that leads here. */
+    private fun resumeAnalysis() {
         sessionSawActiveWork = true
         _uiState.update { it.copy(aiStatus = SmAiStatus.Analyzing) }
         ReplayWorker.enqueueResume(getApplication())
