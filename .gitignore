@@ -15,3 +15,5 @@
 .cxx
 local.properties
 /scripts/models/
+# Claude Code local config — machine-specific (e.g. additionalDirectories paths), not shared.
+.claude/
