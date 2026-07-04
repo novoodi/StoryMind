@@ -50,15 +50,22 @@ abstract class StoryDatabase : RoomDatabase() {
         @Volatile private var instance: StoryDatabase? = null
 
         fun get(context: Context): StoryDatabase = instance ?: synchronized(this) {
-            instance ?: Room.databaseBuilder(
-                context.applicationContext,
-                StoryDatabase::class.java,
-                DB_NAME,
-            )
-                .addMigrations(MIGRATION_1_2)
-                .build()
-                .also { instance = it }
+            instance ?: build(context, DB_NAME).also { instance = it }
         }
+
+        /**
+         * 실 DB([get])와 복원 후보 검증용 사본([com.example.storymind.data.backup.StoryBackupManager]의
+         * Room 오픈 체크)이 **같은 마이그레이션 체인**으로 열리게 하는 단일 빌더. 검증의 의미가
+         * "다음 실행이 이 파일을 여는 데 성공하는가"이므로, 두 경로가 각자 databaseBuilder를
+         * 부르면 새 Migration을 추가할 때 한쪽만 갱신되는 드리프트가 곧 검증 무력화가 된다.
+         */
+        fun build(context: Context, name: String): StoryDatabase = Room.databaseBuilder(
+            context.applicationContext,
+            StoryDatabase::class.java,
+            name,
+        )
+            .addMigrations(MIGRATION_1_2)
+            .build()
 
         /** IngestWorker resolves its database through [get], so worker tests point this singleton
          * at an in-memory database instead; pass null in teardown to restore normal resolution. */

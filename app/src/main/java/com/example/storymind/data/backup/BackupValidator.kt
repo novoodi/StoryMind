@@ -33,6 +33,13 @@ enum class BackupRejection(val userMessage: String) {
     CORRUPT("파일이 손상되어 읽을 수 없어요."),
     MISSING_CHAPTERS("StoryMind 백업이 아니에요 — 원고 테이블이 없어요."),
     NEWER_SCHEMA("더 새로운 버전의 앱에서 만든 백업이에요 — 앱을 업데이트한 뒤 다시 시도해 주세요."),
+
+    /** [BackupValidator]의 정적 검사(1~3)는 통과했지만 Room이 실제로 여는 데 실패한 파일 —
+     * [StoryBackupManager]의 4단계 검증(버리는 사본 Room 오픈)이 돌려주는 사유. 정적 검사만으로는
+     * "chapters 테이블은 있으나 Room의 identity hash/컬럼 구조와 안 맞는 파일"을 못 거르는데,
+     * 그런 파일은 복원 *다음 실행*의 첫 DB 접근에서 throw → 매 실행 크래시 루프가 되고 되돌릴
+     * UI 자체가 못 뜬다. NEWER_SCHEMA와 같은 원칙: 사전에 거부하는 것만이 안전하다. */
+    SCHEMA_MISMATCH("이 앱의 데이터 구조와 맞지 않는 백업이에요 — StoryMind가 만든 백업 파일인지 확인해 주세요."),
 }
 
 sealed interface BackupValidation {
