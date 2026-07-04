@@ -55,6 +55,8 @@ fun SettingsScreen(
     onImportBackup: () -> Unit = {},
     canRollback: Boolean = false,
     onRollback: () -> Unit = {},
+    canAutoBackupRestore: Boolean = false,
+    onAutoBackupRestore: () -> Unit = {},
 ) {
     Column(modifier = modifier.fillMaxSize().background(SmColors.surfaceBase)) {
         SmToolbar(title = "설정")
@@ -112,6 +114,14 @@ fun SettingsScreen(
                     label = "복원 전 데이터로 되돌리기",
                     value = if (backupBusy) "처리 중" else "마지막 복원 직전 상태로",
                     onClick = if (backupBusy) null else onRollback,
+                )
+            }
+            // 주기 자동 백업이 하나라도 쌓여 있을 때만 노출.
+            if (canAutoBackupRestore) {
+                SettingsRow(
+                    label = "최근 자동 백업에서 복원",
+                    value = if (backupBusy) "처리 중" else "마지막 자동 백업 시점으로",
+                    onClick = if (backupBusy) null else onAutoBackupRestore,
                 )
             }
 

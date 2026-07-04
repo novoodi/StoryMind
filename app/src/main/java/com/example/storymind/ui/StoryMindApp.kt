@@ -50,6 +50,7 @@ fun StoryMindApp(modifier: Modifier = Modifier) {
     val rebuildState by viewModel.rebuildState.collectAsState()
     val backupState by viewModel.backupState.collectAsState()
     val preRestoreAvailable by viewModel.preRestoreAvailable.collectAsState()
+    val autoBackupAvailable by viewModel.autoBackupAvailable.collectAsState()
     val autoAnalyze by viewModel.autoAnalyze.collectAsState()
     val spellCheck by viewModel.spellCheck.collectAsState()
     val pendingAnalysisCount by viewModel.pendingAnalysisCount.collectAsState()
@@ -161,6 +162,8 @@ fun StoryMindApp(modifier: Modifier = Modifier) {
                     onImportBackup = { restoreLauncher.launch(arrayOf("*/*")) },
                     canRollback = preRestoreAvailable,
                     onRollback = viewModel::stageRollback,
+                    canAutoBackupRestore = autoBackupAvailable,
+                    onAutoBackupRestore = viewModel::stageAutoBackupRestore,
                 )
             }
 
@@ -209,16 +212,27 @@ fun StoryMindApp(modifier: Modifier = Modifier) {
                 is BackupUiState.RestoreReady -> SmBottomSheet(
                     isOpen = true,
                     onClose = viewModel::cancelRestore,
-                    title = if (bs.isRollback) "복원 전 데이터로 되돌릴까요?" else "백업을 가져올까요?",
-                    description = if (bs.isRollback) {
-                        "마지막 복원 직전에 자동 보관된 데이터로 현재 데이터를 교체합니다. " +
-                            "지금 데이터도 다시 임시 보관돼요. 교체가 끝나면 앱이 다시 시작돼요."
-                    } else {
-                        "현재 데이터를 백업 파일 내용으로 교체합니다. 지금 데이터는 " +
-                            "자동으로 임시 보관됩니다. 교체가 끝나면 앱이 다시 시작돼요."
+                    title = when (bs.source) {
+                        RestoreSource.External -> "백업을 가져올까요?"
+                        RestoreSource.PreRestore -> "복원 전 데이터로 되돌릴까요?"
+                        RestoreSource.AutoBackup -> "자동 백업으로 되돌릴까요?"
                     },
-                    conflictLabel = if (bs.isRollback) "현재 원고·위키가 복원 전 데이터로 바뀌어요"
-                    else "현재 원고·위키가 백업 내용으로 바뀌어요",
+                    description = when (bs.source) {
+                        RestoreSource.External ->
+                            "현재 데이터를 백업 파일 내용으로 교체합니다. 지금 데이터는 " +
+                                "자동으로 임시 보관됩니다. 교체가 끝나면 앱이 다시 시작돼요."
+                        RestoreSource.PreRestore ->
+                            "마지막 복원 직전에 자동 보관된 데이터로 현재 데이터를 교체합니다. " +
+                                "지금 데이터도 다시 임시 보관돼요. 교체가 끝나면 앱이 다시 시작돼요."
+                        RestoreSource.AutoBackup ->
+                            "가장 최근 자동 백업으로 현재 데이터를 교체합니다. 지금 데이터는 " +
+                                "자동으로 임시 보관됩니다. 교체가 끝나면 앱이 다시 시작돼요."
+                    },
+                    conflictLabel = when (bs.source) {
+                        RestoreSource.External -> "현재 원고·위키가 백업 내용으로 바뀌어요"
+                        RestoreSource.PreRestore -> "현재 원고·위키가 복원 전 데이터로 바뀌어요"
+                        RestoreSource.AutoBackup -> "현재 원고·위키가 자동 백업 내용으로 바뀌어요"
+                    },
                     primaryAction = SmSheetAction("교체하고 다시 시작") { viewModel.confirmRestore() },
                     secondaryAction = SmSheetAction("취소") { viewModel.cancelRestore() },
                 )

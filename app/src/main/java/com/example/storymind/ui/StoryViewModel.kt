@@ -85,16 +85,18 @@ data class RebuildUiState(
  * [RestoreReady]가 별도 상태인 것이 복원 안전장치 b의 구현이다: 검증 통과가 곧 실행이
  * 아니라, 사용자의 명시적 확인([StoryViewModel.confirmRestore])을 기다리는 중간 정지점이다.
  */
+/** 복원 후보의 출처 — 검증/확인/승격 경로는 셋 다 동일하고, 확인 시트의 문구만 달라진다. */
+enum class RestoreSource { External, PreRestore, AutoBackup }
+
 sealed interface BackupUiState {
     data object Idle : BackupUiState
     data object Working : BackupUiState
     data object TxtExported : BackupUiState
     data object BackupExported : BackupUiState
     data object ExportFailed : BackupUiState
-    /** 검증 통과, 사용자 확인 대기 — 스테이징 파일이 유지되고 있다. [isRollback]이면 후보가
-     * SAF 파일이 아니라 복원 직전 자동 백업(pre-restore)이라, 확인 시트의 문구만 달라진다 —
-     * 이후 확정/취소 동작은 완전히 동일하다. */
-    data class RestoreReady(val isRollback: Boolean = false) : BackupUiState
+    /** 검증 통과, 사용자 확인 대기 — 스테이징 파일이 유지되고 있다. [source]는 후보가
+     * SAF 파일인지·복원 직전 백업인지·주기 자동 백업인지로, 확인 시트 문구에만 영향을 준다. */
+    data class RestoreReady(val source: RestoreSource) : BackupUiState
     /** 검증 거부 — 아무것도 바뀌지 않았고 [reason]이 그 이유다(안전장치 a). */
     data class RestoreInvalid(val reason: String) : BackupUiState
     data object RestoreFailed : BackupUiState
@@ -170,6 +172,12 @@ class StoryViewModel(application: Application) : AndroidViewModel(application) {
      * 재시작되므로, 프로세스당 한 번 init에서 읽으면 충분하다. */
     private val _preRestoreAvailable = MutableStateFlow(false)
     val preRestoreAvailable: StateFlow<Boolean> = _preRestoreAvailable
+
+    /** 주기 자동 백업이 하나라도 있는지 — 설정의 "최근 자동 백업에서 복원" 노출 조건. 백업은
+     * [com.example.storymind.work.AutoBackupWorker]가 백그라운드에서 만들므로, preRestore와
+     * 마찬가지로 프로세스당 한 번 init에서 읽는다(다음 실행에 반영). */
+    private val _autoBackupAvailable = MutableStateFlow(false)
+    val autoBackupAvailable: StateFlow<Boolean> = _autoBackupAvailable
 
     /**
      * Non-blank chapters that have no ingested wiki behind them yet — the count the editor's
@@ -264,6 +272,7 @@ class StoryViewModel(application: Application) : AndroidViewModel(application) {
                 _backupState.value = BackupUiState.RestoreCompleted
             }
             _preRestoreAvailable.value = StoryBackupManager.hasPreRestoreBackup(getApplication())
+            _autoBackupAvailable.value = StoryBackupManager.hasAutoBackup(getApplication())
         }
     }
 
@@ -551,7 +560,7 @@ class StoryViewModel(application: Application) : AndroidViewModel(application) {
         viewModelScope.launch {
             _backupState.value = BackupUiState.Working
             _backupState.value = when (val v = StoryBackupManager.stageRestore(getApplication(), uri)) {
-                is BackupValidation.Valid -> BackupUiState.RestoreReady(isRollback = false)
+                is BackupValidation.Valid -> BackupUiState.RestoreReady(RestoreSource.External)
                 is BackupValidation.Invalid -> BackupUiState.RestoreInvalid(v.rejection.userMessage)
             }
         }
@@ -563,7 +572,19 @@ class StoryViewModel(application: Application) : AndroidViewModel(application) {
         viewModelScope.launch {
             _backupState.value = BackupUiState.Working
             _backupState.value = when (val v = StoryBackupManager.stagePreRestoreRollback(getApplication())) {
-                is BackupValidation.Valid -> BackupUiState.RestoreReady(isRollback = true)
+                is BackupValidation.Valid -> BackupUiState.RestoreReady(RestoreSource.PreRestore)
+                is BackupValidation.Invalid -> BackupUiState.RestoreInvalid(v.rejection.userMessage)
+            }
+        }
+    }
+
+    /** 최근 주기 자동 백업으로 되돌리기 — 위 둘과 같은 경로, 후보만 최신 자동 백업 파일.
+     * 진입점 노출 여부는 [autoBackupAvailable]이 결정한다. */
+    fun stageAutoBackupRestore() {
+        viewModelScope.launch {
+            _backupState.value = BackupUiState.Working
+            _backupState.value = when (val v = StoryBackupManager.stageAutoBackupRestore(getApplication())) {
+                is BackupValidation.Valid -> BackupUiState.RestoreReady(RestoreSource.AutoBackup)
                 is BackupValidation.Invalid -> BackupUiState.RestoreInvalid(v.rejection.userMessage)
             }
         }

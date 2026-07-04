@@ -31,6 +31,9 @@ import kotlinx.coroutines.withContext
  */
 object StoryBackupManager {
 
+    /** 자동 백업을 몇 개까지 굴려 보관할지 — 최신 것 하나가 손상됐을 때를 대비해 여유분을 둔다. */
+    private const val AUTO_BACKUP_RETENTION = 3
+
     private fun restoreDir(context: Context) = File(context.filesDir, "restore")
 
     /** SAF에서 복사해 와 검증을 통과한(또는 기다리는) 복원 후보. */
@@ -41,6 +44,14 @@ object StoryBackupManager {
 
     /** 교체 직전 원본 DB의 자동 백업 — 직전 1개만 유지하는 마지막 안전망. */
     private fun preRestoreFile(context: Context) = File(restoreDir(context), "pre-restore.db")
+
+    /** 주기적 자동 백업 스냅샷들이 쌓이는 디렉터리. [preRestoreFile](복원 직전 1회성)과 달리
+     * 시간 순으로 여러 개를 굴려 유지한다. */
+    private fun autoBackupDir(context: Context) = File(context.filesDir, "auto-backups")
+
+    private fun autoBackupFiles(context: Context): List<File> =
+        autoBackupDir(context).listFiles { f -> f.isFile && f.name.startsWith("auto-") && f.name.endsWith(".db") }
+            ?.toList().orEmpty()
 
     /** 복원이 실제로 적용됐음을 다음 프로세스의 UI에 알리는 1회성 마커. */
     private fun completedMarker(context: Context) = File(restoreDir(context), "restore-completed")
@@ -105,6 +116,48 @@ object StoryBackupManager {
      * 노출할지 결정하는 데 쓴다. */
     suspend fun hasPreRestoreBackup(context: Context): Boolean =
         withContext(Dispatchers.IO) { preRestoreFile(context).isFile }
+
+    /**
+     * 주기적 자동 백업 스냅샷을 하나 쓰고 오래된 것을 [AUTO_BACKUP_RETENTION]개까지만 남긴다
+     * ([com.example.storymind.work.AutoBackupWorker]가 호출). 내보내기와 같은 `VACUUM INTO`
+     * 스냅샷이라(원칙 1) WAL에만 있던 커밋까지 포함된 단일 파일이 나오고, 열린 Room 커넥션
+     * 위에서 돌아도 안전하다. 파일명의 밀리초 타임스탬프는 자릿수가 고정이라 사전식 정렬이
+     * 곧 시간순 정렬이다 — 최신 판별([latestAutoBackup])과 회전이 문자열 비교만으로 된다. */
+    suspend fun writeAutoBackup(context: Context) = withContext(Dispatchers.IO) {
+        val dir = autoBackupDir(context).apply { mkdirs() }
+        val target = File(dir, "auto-${System.currentTimeMillis()}.db")
+        vacuumInto(context, target)
+        autoBackupFiles(context)
+            .sortedByDescending { it.name }
+            .drop(AUTO_BACKUP_RETENTION)
+            .forEach { it.delete() }
+    }
+
+    private fun latestAutoBackup(context: Context): File? =
+        autoBackupFiles(context).maxByOrNull { it.name }
+
+    /** 자동 백업이 하나라도 있는지 — 설정의 "최근 자동 백업에서 복원" 진입점 노출 조건. */
+    suspend fun hasAutoBackup(context: Context): Boolean =
+        withContext(Dispatchers.IO) { latestAutoBackup(context) != null }
+
+    /**
+     * 가장 최근 자동 백업으로 되돌리기 위한 스테이징 — [stagePreRestoreRollback]과 같은
+     * 검증/확인/승격 경로를 타되 후보만 최신 자동 백업 파일이다. 이 앱이 직접 VACUUM으로 만든
+     * 스냅샷이라 검증은 사실상 통과 확인이지만, 경로를 나누지 않는 것이 안전장치의 요점이다.
+     */
+    suspend fun stageAutoBackupRestore(context: Context): BackupValidation =
+        withContext(Dispatchers.IO) {
+            val source = latestAutoBackup(context) ?: return@withContext BackupValidation.Invalid(BackupRejection.CORRUPT)
+            val staged = stagedFile(context)
+            staged.parentFile?.mkdirs()
+            try {
+                source.copyTo(staged, overwrite = true)
+            } catch (_: Exception) {
+                staged.delete()
+                return@withContext BackupValidation.Invalid(BackupRejection.CORRUPT)
+            }
+            validateStaged(context, staged)
+        }
 
     /**
      * [stageRestore]의 되돌리기(rollback) 변형: SAF 후보 대신 [promoteStagedRestore]가 만들어
