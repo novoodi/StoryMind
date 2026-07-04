@@ -28,6 +28,7 @@ enum class SmTab(val icon: Int, val label: String) {
     Editor(SmIcons.Edit, "에디터"),
     Brain(SmIcons.Brain, "브레인"),
     Wiki(SmIcons.Book, "위키"),
+    Statistics(SmIcons.Chart, "통계"),
     Settings(SmIcons.Gear, "설정"),
 }
 

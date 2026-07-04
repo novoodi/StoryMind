@@ -29,6 +29,7 @@ import com.example.storymind.ui.screens.BrainScreen
 import com.example.storymind.ui.screens.EditorChapterSnapshot
 import com.example.storymind.ui.screens.EditorScreen
 import com.example.storymind.ui.screens.SettingsScreen
+import com.example.storymind.ui.screens.StatisticsScreen
 import com.example.storymind.ui.screens.WikiScreen
 import java.text.SimpleDateFormat
 import java.util.Date
@@ -54,6 +55,7 @@ fun StoryMindApp(modifier: Modifier = Modifier) {
     val autoAnalyze by viewModel.autoAnalyze.collectAsState()
     val spellCheck by viewModel.spellCheck.collectAsState()
     val pendingAnalysisCount by viewModel.pendingAnalysisCount.collectAsState()
+    val writingStats by viewModel.writingStats.collectAsState()
 
     // SAF 계약들. CreateDocument의 파일명 기본값에 날짜를 넣는 것은 launch 시점에 계산한다
     // (컴포지션 시점에 고정하면 자정을 넘긴 세션에서 어제 날짜가 제안된다).
@@ -146,6 +148,12 @@ fun StoryMindApp(modifier: Modifier = Modifier) {
                 SmTab.Wiki -> WikiScreen(
                     entries = uiState.wikiEntries,
                     rebuildBanner = rebuildBanner,
+                )
+                SmTab.Statistics -> StatisticsScreen(
+                    stats = writingStats,
+                    wikiEntries = uiState.wikiEntries,
+                    edgeCount = uiState.graphEdges.size,
+                    orphanCount = uiState.orphanIds.size,
                 )
                 SmTab.Settings -> SettingsScreen(
                     spellCheck = spellCheck,

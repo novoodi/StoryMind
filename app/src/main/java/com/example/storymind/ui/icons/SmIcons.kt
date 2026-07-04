@@ -38,6 +38,7 @@ object SmIcons {
     val Book = R.drawable.ic_book
     val Wiki = R.drawable.ic_book
     val Gear = R.drawable.ic_gear
+    val Chart = R.drawable.ic_chart
     val Close = R.drawable.ic_close
     val Search = R.drawable.ic_search
     val More = R.drawable.ic_more

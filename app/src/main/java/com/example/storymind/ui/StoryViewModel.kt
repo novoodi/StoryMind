@@ -15,6 +15,8 @@ import com.example.storymind.data.backup.BackupValidation
 import com.example.storymind.data.backup.StoryBackupManager
 import com.example.storymind.data.db.ChapterEntity
 import com.example.storymind.data.db.StoryDatabase
+import com.example.storymind.data.statistics.WritingStats
+import com.example.storymind.data.statistics.computeWritingStats
 import com.example.storymind.platform.IngestEngineProvider
 import com.example.storymind.ui.components.SmAiStatus
 import com.example.storymind.work.IngestWorker
@@ -212,6 +214,13 @@ class StoryViewModel(application: Application) : AndroidViewModel(application) {
     ) { chapters, currentIndex ->
         chapters.count { it.body.isNotBlank() && !it.ingested && it.chapterIndex != currentIndex }
     }.stateIn(viewModelScope, SharingStarted.Eagerly, 0)
+
+    /** 통계 탭이 관찰하는 집필 통계. pendingAnalysisCount와 같은 이유로 UI 상태가 아니라
+     * observeChapters()(진짜 소스 오브 트루스)에서 파생한다 — 저장된 원고 전수를 정확히 센다.
+     * 계산은 순수 함수 [computeWritingStats]에 있어 JVM 테스트로 못 박혀 있다. */
+    val writingStats: StateFlow<WritingStats> = repository.observeChapters()
+        .map { computeWritingStats(it) }
+        .stateIn(viewModelScope, SharingStarted.Eagerly, WritingStats())
 
     /** Brain/Wiki rebuild banner; also read by [saveAndIngest] to keep the badge on the replay
      * chain while a rebuild is running (the per-save worker defers to it anyway). */
