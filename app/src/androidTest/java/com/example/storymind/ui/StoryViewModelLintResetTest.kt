@@ -1,6 +1,7 @@
 package com.example.storymind.ui
 
 import android.app.Application
+import androidx.lifecycle.viewModelScope
 import androidx.room.Room
 import androidx.test.core.app.ApplicationProvider
 import androidx.test.ext.junit.runners.AndroidJUnit4
@@ -8,6 +9,8 @@ import androidx.work.testing.WorkManagerTestInitHelper
 import com.example.storymind.ai.OnDeviceTextEngine
 import com.example.storymind.data.db.StoryDatabase
 import com.example.storymind.platform.IngestEngineProvider
+import kotlinx.coroutines.Job
+import kotlinx.coroutines.cancel
 import kotlinx.coroutines.flow.first
 import kotlinx.coroutines.runBlocking
 import kotlinx.coroutines.withTimeout
@@ -31,6 +34,7 @@ class StoryViewModelLintResetTest {
 
     private lateinit var application: Application
     private lateinit var db: StoryDatabase
+    private var viewModel: StoryViewModel? = null
 
     @Before
     fun setUp() {
@@ -47,7 +51,18 @@ class StoryViewModelLintResetTest {
     }
 
     @After
-    fun tearDown() {
+    fun tearDown() = runBlocking {
+        // ViewModel의 관찰 코루틴(observeChapterFlags의 Room Flow, WorkManager WorkInfo 구독)은
+        // clear 없이는 계속 살아 있다. cancel()은 취소를 요청만 하고 즉시 반환하므로 그 직후
+        // db.close()하면 아직 정리 중인 Room Flow가 닫힌 커넥션 풀을 건드려 백그라운드에서
+        // 크래시하거나(연결 풀 닫힘), WorkManager 싱글턴을 통해 깨어나 이미 닫힌 DB를 읽어
+        // *다음* 테스트를 죽인다. scope Job을 join해 취소 완료를 기다린 뒤 닫는다.
+        viewModel?.let { vm ->
+            val job = vm.viewModelScope.coroutineContext[Job]
+            vm.viewModelScope.cancel()
+            job?.join()
+        }
+        viewModel = null
         IngestEngineProvider.textEngineOverride = null
         StoryDatabase.setInstanceForTesting(null)
         db.close()
@@ -55,7 +70,7 @@ class StoryViewModelLintResetTest {
 
     @Test
     fun resavingTheChapter_resetsAStaleLintResult() = runBlocking {
-        val viewModel = StoryViewModel(application)
+        val viewModel = StoryViewModel(application).also { this@StoryViewModelLintResetTest.viewModel = it }
         withTimeout(TIMEOUT_MS) { viewModel.uiState.first { it.isLoaded } }
 
         viewModel.onBodyChange("지우와 민준이 카페에서 만났다.")
@@ -68,9 +83,17 @@ class StoryViewModelLintResetTest {
 
         // Re-editing and re-saving the same (not-yet-advanced) chapter must invalidate the now-
         // stale lint result — otherwise it would misread as a verdict on the new manuscript.
+        // Awaited (not asserted synchronously — saveAndIngest resets inside a launched coroutine).
         viewModel.onBodyChange("지우와 민준이 다시 만났다.")
         viewModel.saveAndIngest()
+        withTimeout(TIMEOUT_MS) { viewModel.lintState.first { it == LintUiState.Idle } }
 
+        // The reset must also *survive* the re-save's ingest running to completion: those
+        // WorkManager DB changes (enqueue → RUNNING → SUCCEEDED) are exactly the stimulus that
+        // used to make a still-attached old subscription re-emit the finished lint's SUCCEEDED
+        // record and flip the state back to a stale Done (the regression this test caught
+        // on-device, 2026-07 — fixed by observeLintWork's null branch detaching the subscription).
+        withTimeout(TIMEOUT_MS) { viewModel.uiState.first { it.lastSaveIngested } }
         assertEquals(LintUiState.Idle, viewModel.lintState.value)
     }
 

@@ -64,6 +64,31 @@ class StoryDatabaseMigrationTest {
         }
     }
 
+    @Test
+    fun migrate2To3_preservesExistingEdgeAndBackfillsSentinelProvenance() {
+        helper.createDatabase(TEST_DB_NAME, 2).apply {
+            execSQL("INSERT INTO graph_edges (fromId, toId) VALUES ('yul', 'jinseong')")
+            close()
+        }
+
+        // Applies MIGRATION_2_3 and validates the result matches the exported v3 schema, including
+        // the `chapters TEXT NOT NULL DEFAULT '?'` column (identity-hash checked — this is the only
+        // place the entity's @ColumnInfo default and the migration's DEFAULT are proven to agree).
+        val migratedDb = helper.runMigrationsAndValidate(TEST_DB_NAME, 3, true, MIGRATION_2_3)
+
+        migratedDb.query("SELECT fromId, toId, chapters FROM graph_edges").use { cursor ->
+            assertTrue("expected the pre-migration edge row to survive", cursor.moveToFirst())
+            assertEquals("yul", cursor.getString(0))
+            assertEquals("jinseong", cursor.getString(1))
+            assertEquals(
+                "a legacy v2 edge (no per-edge provenance) must backfill to the '?' sentinel",
+                "?",
+                cursor.getString(2),
+            )
+            assertFalse("expected exactly one edge row", cursor.moveToNext())
+        }
+    }
+
     private companion object {
         const val TEST_DB_NAME = "story-migration-test.db"
     }

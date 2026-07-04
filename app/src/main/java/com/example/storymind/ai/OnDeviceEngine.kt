@@ -58,7 +58,11 @@ class OnDeviceEngine(context: Context) {
                 backend = EngineBackend.GPU
                 Log.i(TAG, "Initialized LiteRT-LM engine with GPU backend")
                 return@withLock
-            } catch (e: Exception) {
+            } catch (e: Throwable) {
+                // Throwable(Exception 아님): GPU 초기화는 네이티브 라이브러리 로딩을 수반해
+                // libOpenCL이 없는 기기에선 UnsatisfiedLinkError 같은 Error 계열로 실패할 수
+                // 있다 — GPU가 안 되는 기기야말로 CPU 폴백이 있어야 하는 기기이므로, 여기서
+                // Error를 흘려보내면 폴백이 가장 필요한 곳에서 크래시가 난다.
                 Log.w(TAG, "GPU backend initialization failed, falling back to CPU", e)
                 try {
                     gpuEngine.close()

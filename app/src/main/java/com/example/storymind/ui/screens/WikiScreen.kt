@@ -13,9 +13,7 @@ import androidx.compose.ui.unit.dp
 import com.example.storymind.data.WikiEntry
 import com.example.storymind.ui.components.SmBadge
 import com.example.storymind.ui.components.SmCard
-import com.example.storymind.ui.components.SmIconButton
 import com.example.storymind.ui.components.SmToolbar
-import com.example.storymind.ui.icons.SmIcons
 import com.example.storymind.ui.theme.SmColors
 
 /** Auto-generated setting-bible list — mirrors the prototype's WikiScreen. */
@@ -26,10 +24,8 @@ fun WikiScreen(
     rebuildBanner: (@Composable () -> Unit)? = null,
 ) {
     Column(modifier = modifier.fillMaxSize().background(SmColors.surfaceBase)) {
-        SmToolbar(
-            title = "위키",
-            right = { SmIconButton(icon = SmIcons.Search, onClick = {}) },
-        )
+        // 검색 버튼은 검색 기능이 아직 없어 제거 — 눌러도 아무 일도 안 하던 장식.
+        SmToolbar(title = "위키")
         rebuildBanner?.invoke()
         LazyColumn(
             modifier = Modifier.fillMaxSize(),

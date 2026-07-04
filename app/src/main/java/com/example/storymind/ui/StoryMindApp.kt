@@ -17,6 +17,7 @@ import androidx.compose.runtime.remember
 import androidx.compose.runtime.setValue
 import androidx.compose.ui.Modifier
 import androidx.lifecycle.viewmodel.compose.viewModel
+import com.example.storymind.ui.components.SmAiStatus
 import com.example.storymind.ui.components.SmBottomSheet
 import com.example.storymind.ui.components.SmLintResultSheet
 import com.example.storymind.ui.components.SmNavBar
@@ -28,6 +29,7 @@ import com.example.storymind.ui.screens.BrainScreen
 import com.example.storymind.ui.screens.EditorChapterSnapshot
 import com.example.storymind.ui.screens.EditorScreen
 import com.example.storymind.ui.screens.SettingsScreen
+import com.example.storymind.ui.screens.StatisticsScreen
 import com.example.storymind.ui.screens.WikiScreen
 import java.text.SimpleDateFormat
 import java.util.Date
@@ -48,12 +50,21 @@ fun StoryMindApp(modifier: Modifier = Modifier) {
     val lintState by viewModel.lintState.collectAsState()
     val rebuildState by viewModel.rebuildState.collectAsState()
     val backupState by viewModel.backupState.collectAsState()
+    val preRestoreAvailable by viewModel.preRestoreAvailable.collectAsState()
+    val autoBackupAvailable by viewModel.autoBackupAvailable.collectAsState()
+    val autoAnalyze by viewModel.autoAnalyze.collectAsState()
+    val spellCheck by viewModel.spellCheck.collectAsState()
+    val pendingAnalysisCount by viewModel.pendingAnalysisCount.collectAsState()
+    val writingStats by viewModel.writingStats.collectAsState()
 
     // SAF 계약들. CreateDocument의 파일명 기본값에 날짜를 넣는 것은 launch 시점에 계산한다
     // (컴포지션 시점에 고정하면 자정을 넘긴 세션에서 어제 날짜가 제안된다).
     val txtExportLauncher = rememberLauncherForActivityResult(
         ActivityResultContracts.CreateDocument("text/plain")
     ) { uri -> uri?.let(viewModel::exportManuscriptTxt) }
+    val mdExportLauncher = rememberLauncherForActivityResult(
+        ActivityResultContracts.CreateDocument("text/markdown")
+    ) { uri -> uri?.let(viewModel::exportManuscriptMarkdown) }
     val backupExportLauncher = rememberLauncherForActivityResult(
         ActivityResultContracts.CreateDocument("application/octet-stream")
     ) { uri -> uri?.let(viewModel::exportBackup) }
@@ -92,14 +103,27 @@ fun StoryMindApp(modifier: Modifier = Modifier) {
     Column(modifier = modifier.fillMaxSize().statusBarsPadding()) {
         Box(modifier = Modifier.fillMaxSize().weight(1f, fill = true)) {
             when (tab) {
+                // 미분석 화 배너는 "지금 손댈 수 있고, 손댈 필요가 있는" 유휴 상태에서만 뜬다:
+                // 분석/재구축이 돌고 있으면(그 화들이 처리 중) 숨기고, 실패(Warning)면 이미
+                // "다시 시도" 버튼이 같은 resume을 제공하므로 중복 노출을 피하며, 모델이 없으면
+                // 분석 자체가 불가능하다. 이 게이트를 통과 못 하면 count 0으로 눌러 배너를 끈다.
                 SmTab.Editor -> EditorScreen(
                     aiStatus = uiState.aiStatus,
                     shakeTrigger = shakeTrigger,
                     canAdvance = uiState.canAdvance,
+                    spellCheck = spellCheck,
+                    pendingAnalysisCount = if (
+                        !rebuildState.running &&
+                        uiState.isModelAvailable &&
+                        (uiState.aiStatus == SmAiStatus.Idle || uiState.aiStatus == SmAiStatus.Done)
+                    ) pendingAnalysisCount else 0,
+                    onAnalyzePending = viewModel::analyzePending,
                     previousChapters = uiState.previousChapters.map {
                         EditorChapterSnapshot(label = it.label, title = it.title, body = it.body)
                     },
                     currentLabel = uiState.currentLabel,
+                    currentTitle = uiState.currentTitle,
+                    onTitleChange = viewModel::onTitleChange,
                     currentBody = uiState.currentBody,
                     onBodyChange = viewModel::onBodyChange,
                     onSave = viewModel::saveAndIngest,
@@ -119,23 +143,39 @@ fun StoryMindApp(modifier: Modifier = Modifier) {
                     orphanIds = uiState.orphanIds,
                     wikiEntries = uiState.wikiEntries,
                     rebuildBanner = rebuildBanner,
+                    onNodeMoved = viewModel::moveNode,
                 )
                 SmTab.Wiki -> WikiScreen(
                     entries = uiState.wikiEntries,
                     rebuildBanner = rebuildBanner,
                 )
+                SmTab.Statistics -> StatisticsScreen(
+                    stats = writingStats,
+                    wikiEntries = uiState.wikiEntries,
+                    edgeCount = uiState.graphEdges.size,
+                    orphanCount = uiState.orphanIds.size,
+                )
                 SmTab.Settings -> SettingsScreen(
+                    spellCheck = spellCheck,
+                    onSpellCheckChange = viewModel::setSpellCheck,
+                    autoAnalyze = autoAnalyze,
+                    onAutoAnalyzeChange = viewModel::setAutoAnalyze,
                     rebuildRunning = rebuildState.running,
                     rebuildProgressLabel = "재구축 중 ${rebuildState.ingestedCount}/${rebuildState.totalCount}화",
                     canRebuild = uiState.isModelAvailable,
                     onRebuildRequest = { rebuildConfirmOpen = true },
                     backupBusy = backupState == BackupUiState.Working,
                     onExportTxt = { txtExportLauncher.launch("storymind-원고-${today()}.txt") },
+                    onExportMd = { mdExportLauncher.launch("storymind-원고-${today()}.md") },
                     onExportBackup = { backupExportLauncher.launch("storymind-backup-${today()}.db") },
                     // OpenDocument의 마임 필터가 "*/*"인 이유: .db에는 표준 마임타입이 없어
                     // 좁은 필터로는 문서 프로바이더 대부분이 방금 내보낸 백업조차 회색 처리한다.
                     // 잘못된 파일 선택은 어차피 검증(안전장치 a)이 막는다.
                     onImportBackup = { restoreLauncher.launch(arrayOf("*/*")) },
+                    canRollback = preRestoreAvailable,
+                    onRollback = viewModel::stageRollback,
+                    canAutoBackupRestore = autoBackupAvailable,
+                    onAutoBackupRestore = viewModel::stageAutoBackupRestore,
                 )
             }
 
@@ -181,13 +221,30 @@ fun StoryMindApp(modifier: Modifier = Modifier) {
             // (안전장치 b — 여기서 확정해야만 confirmRestore가 진행된다), 나머지는 결과 안내다.
             when (val bs = backupState) {
                 BackupUiState.Idle, BackupUiState.Working -> Unit
-                BackupUiState.RestoreReady -> SmBottomSheet(
+                is BackupUiState.RestoreReady -> SmBottomSheet(
                     isOpen = true,
                     onClose = viewModel::cancelRestore,
-                    title = "백업을 가져올까요?",
-                    description = "현재 데이터를 백업 파일 내용으로 교체합니다. 지금 데이터는 " +
-                        "자동으로 임시 보관됩니다. 교체가 끝나면 앱이 다시 시작돼요.",
-                    conflictLabel = "현재 원고·위키가 백업 내용으로 바뀌어요",
+                    title = when (bs.source) {
+                        RestoreSource.External -> "백업을 가져올까요?"
+                        RestoreSource.PreRestore -> "복원 전 데이터로 되돌릴까요?"
+                        RestoreSource.AutoBackup -> "자동 백업으로 되돌릴까요?"
+                    },
+                    description = when (bs.source) {
+                        RestoreSource.External ->
+                            "현재 데이터를 백업 파일 내용으로 교체합니다. 지금 데이터는 " +
+                                "자동으로 임시 보관됩니다. 교체가 끝나면 앱이 다시 시작돼요."
+                        RestoreSource.PreRestore ->
+                            "마지막 복원 직전에 자동 보관된 데이터로 현재 데이터를 교체합니다. " +
+                                "지금 데이터도 다시 임시 보관돼요. 교체가 끝나면 앱이 다시 시작돼요."
+                        RestoreSource.AutoBackup ->
+                            "가장 최근 자동 백업으로 현재 데이터를 교체합니다. 지금 데이터는 " +
+                                "자동으로 임시 보관됩니다. 교체가 끝나면 앱이 다시 시작돼요."
+                    },
+                    conflictLabel = when (bs.source) {
+                        RestoreSource.External -> "현재 원고·위키가 백업 내용으로 바뀌어요"
+                        RestoreSource.PreRestore -> "현재 원고·위키가 복원 전 데이터로 바뀌어요"
+                        RestoreSource.AutoBackup -> "현재 원고·위키가 자동 백업 내용으로 바뀌어요"
+                    },
                     primaryAction = SmSheetAction("교체하고 다시 시작") { viewModel.confirmRestore() },
                     secondaryAction = SmSheetAction("취소") { viewModel.cancelRestore() },
                 )
@@ -210,6 +267,11 @@ fun StoryMindApp(modifier: Modifier = Modifier) {
                 BackupUiState.TxtExported -> BackupInfoSheet(
                     title = "원고를 내보냈어요",
                     description = "선택한 위치에 전체 원고가 텍스트 파일로 저장됐어요.",
+                    onDismiss = viewModel::dismissBackupState,
+                )
+                BackupUiState.MdExported -> BackupInfoSheet(
+                    title = "원고를 내보냈어요",
+                    description = "선택한 위치에 전체 원고가 Markdown 파일로 저장됐어요.",
                     onDismiss = viewModel::dismissBackupState,
                 )
                 BackupUiState.BackupExported -> BackupInfoSheet(

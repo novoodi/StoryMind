@@ -19,6 +19,7 @@ import org.json.JSONObject
 import org.junit.After
 import org.junit.Assert.assertTrue
 import org.junit.Assume.assumeTrue
+import org.junit.Ignore
 import org.junit.Test
 import org.junit.runner.RunWith
 
@@ -55,6 +56,12 @@ class ConstrainedDecodingSmokeTest {
     }
 
     @Test
+    @Ignore(
+        "Spike measurement, not a correctness gate — see docs/constrained-decoding-spike.md. It " +
+            "asserts the flag DOES constrain output, which it does not on LiteRT-LM 0.13.1, so it " +
+            "fails by design and would keep connectedAndroidTest red. Re-enable to re-measure on a " +
+            "new model/runtime revision.",
+    )
     fun promptOnly_withConstrainedDecodingFlag_fiveRunsProduceStrictJson() = runBlocking {
         val engine = OnDeviceEngine(context)
         assumeTrue("Model file not found at ${engine.modelPath} — skipping", engine.isModelAvailable)
@@ -85,6 +92,12 @@ class ConstrainedDecodingSmokeTest {
     }
 
     @Test
+    @Ignore(
+        "Spike measurement, not a correctness gate — see docs/constrained-decoding-spike.md. The " +
+            "tool-call path did not yield schema-shaped arguments on LiteRT-LM 0.13.1, so this " +
+            "fails by design and would keep connectedAndroidTest red. Re-enable to re-measure on a " +
+            "new model/runtime revision.",
+    )
     fun toolCall_withConstrainedDecodingFlag_fiveRunsProduceSchemaShapedArguments() {
         val pathProbe = OnDeviceEngine(context)
         assumeTrue("Model file not found at ${pathProbe.modelPath} — skipping", pathProbe.isModelAvailable)

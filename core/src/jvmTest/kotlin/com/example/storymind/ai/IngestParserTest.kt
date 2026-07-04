@@ -84,6 +84,50 @@ class IngestParserTest {
     }
 
     @Test
+    fun `does not corrupt a valid response whose values contain a colon followed by a non-space character`() {
+        // Regression (2026-07 코드 감사): the repair chain used to run unconditionally, and
+        // MISSING_VALUE_OPEN_QUOTE_REGEX fires on any `:` immediately followed by a non-space
+        // character — a shape every clock time / score / ratio inside a desc or summary has
+        // ("3:00", "3:2"). Repairing this *valid* response turned it into unparseable JSON, so a
+        // chapter whose content kept re-producing the pattern failed every retry deterministically.
+        // The strict-parse-first gate must hand this response through byte-identical.
+        val raw = """
+            {
+              "chapter_summary": "율은 매일 3:00에 일어나 하루를 시작했다.",
+              "entities": [
+                {"id":"율","type":"character","name":"율","desc":"시간 3:00을 반드시 지키는 인물"}
+              ],
+              "relations": []
+            }
+        """.trimIndent()
+
+        val result = IngestParser.parse(raw)
+
+        assertEquals("율은 매일 3:00에 일어나 하루를 시작했다.", result.chapterSummary)
+        assertEquals("시간 3:00을 반드시 지키는 인물", result.entities.single().desc)
+    }
+
+    @Test
+    fun `does not insert commas into a valid desc containing quoted dialogue`() {
+        // Same class as the colon regression above, for MISSING_COMMA_REGEX: a `"` followed by
+        // whitespace and another `"` *inside a string value* (escaped dialogue quotes) matches the
+        // missing-comma pattern, which used to silently splice a comma into author-visible text.
+        val raw = """
+            {
+              "chapter_summary": "요약",
+              "entities": [
+                {"id":"율","type":"character","name":"율","desc":"그는 \"안녕\" \"잘가\" 라고 말하는 버릇이 있다"}
+              ],
+              "relations": []
+            }
+        """.trimIndent()
+
+        val result = IngestParser.parse(raw)
+
+        assertEquals("그는 \"안녕\" \"잘가\" 라고 말하는 버릇이 있다", result.entities.single().desc)
+    }
+
+    @Test
     fun `falls back to empty result when no JSON object is present`() {
         val raw = "이건 그냥 모델이 JSON을 만들다 만 텍스트입니다 { \"entities\": [ 이상하게 끊김"
 

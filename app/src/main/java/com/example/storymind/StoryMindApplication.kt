@@ -8,6 +8,7 @@ import com.example.storymind.data.backup.StoryBackupManager
 import com.example.storymind.platform.AndroidIngestFailureRecorder
 import com.example.storymind.platform.AndroidIngestLogger
 import com.example.storymind.platform.AndroidPartialDropRecorder
+import com.example.storymind.work.AutoBackupWorker
 
 /**
  * Wires ai/'s platform-neutral logging/failure-recording seams at process start (CLAUDE.md rule
@@ -26,5 +27,8 @@ class StoryMindApplication : Application() {
         ingestLogger = AndroidIngestLogger
         ingestFailureRecorder = AndroidIngestFailureRecorder(this)
         partialDropRecorder = AndroidPartialDropRecorder(this)
+        // 주기적 안전망 백업 예약(멱등, KEEP). applyPendingRestoreIfAny 뒤에 두어 복원 교체가
+        // 끝난 DB를 대상으로만 스냅샷이 잡히게 한다.
+        AutoBackupWorker.schedule(this)
     }
 }

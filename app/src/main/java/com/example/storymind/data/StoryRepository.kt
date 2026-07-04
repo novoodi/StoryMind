@@ -47,6 +47,10 @@ class StoryRepository(private val db: StoryDatabase) {
 
     suspend fun loadProgress(): ChapterProgress = dao.loadProgress().toDomain()
 
+    /** 브레인 화면 드래그가 확정한 노드 위치 저장 — 규칙 2의 "코드가 결정"에서 초기 배치
+     * 이후의 배치는 사용자 몫이라는 후반부를 실제로 지탱하는 유일한 쓰기 경로. */
+    suspend fun updateNodePosition(id: String, x: Float, y: Float) = dao.updateNodePosition(id, x, y)
+
     suspend fun saveProgress(progress: ChapterProgress) {
         dao.replaceProgress(progress.toEntities())
     }
@@ -79,7 +83,7 @@ class StoryRepository(private val db: StoryDatabase) {
         val chapter = dao.loadChapter(chapterIndex)
         if (chapter == null || chapter.body != ingestedBody) return@withTransaction false
 
-        val merged = dao.loadProgress().toDomain().merge(result)
+        val merged = dao.loadProgress().toDomain().merge(result, chapter.label)
         dao.replaceProgress(merged.toEntities())
         dao.markIngested(chapterIndex, engine, promptVersion)
         true

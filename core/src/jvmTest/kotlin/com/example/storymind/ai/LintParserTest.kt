@@ -36,6 +36,32 @@ class LintParserTest {
     }
 
     @Test
+    fun `does not splice commas into a valid finding whose prose contains quoted dialogue`() {
+        // Regression (2026-07 코드 감사): the repair chain used to run unconditionally, and
+        // MISSING_COMMA_REGEX matches a `"` + whitespace + `"` even inside a string value —
+        // escaped dialogue quotes in evidence/reason prose got a comma silently spliced in and
+        // shown to the user. Strict-parse-first must hand valid output through byte-identical.
+        val raw = """
+            {
+              "findings": [
+                {
+                  "entity_id": "yul",
+                  "verdict": "conflict",
+                  "chapter_evidence": "율이 \"괜찮아\" \"문제없어\" 라고 말하며 물에 뛰어들었다",
+                  "wiki_evidence": "1화: 매일 3:00에 수련한다",
+                  "reason": "이유"
+                }
+              ]
+            }
+        """.trimIndent()
+
+        val result = LintParser.parse(raw)
+
+        assertEquals("율이 \"괜찮아\" \"문제없어\" 라고 말하며 물에 뛰어들었다", result[0].chapterEvidence)
+        assertEquals("1화: 매일 3:00에 수련한다", result[0].wikiEvidence)
+    }
+
+    @Test
     fun `strips a markdown json code fence around an otherwise valid JSON object`() {
         val raw = """
             ```json

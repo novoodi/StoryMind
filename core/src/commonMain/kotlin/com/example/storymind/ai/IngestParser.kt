@@ -143,6 +143,21 @@ object IngestParser {
         ignoreUnknownKeys = true
     }
 
+    /**
+     * Strict (default-config) parser used only as [parseOrNull]'s pre-repair gate. Every pattern
+     * the repair chain targets (missing comma/quote/key, doubled brace, stray fragment) is a
+     * grammar violation strict JSON rejects — so "strict-parses successfully" is a proof that the
+     * output has none of them and must not be run through the repairs. That proof matters because
+     * the repairs are heuristics that can misfire on *valid* output: [MISSING_VALUE_OPEN_QUOTE_REGEX]
+     * fires on any `:` immediately followed by a non-space character, which a legitimate desc/
+     * summary value contains whenever the chapter mentions a clock time or score ("3:00", "3:2") —
+     * repairing such a response used to corrupt it into unparseable JSON, deterministically failing
+     * every retry of a chapter whose content kept re-producing the pattern (2026-07 finding).
+     * Gemma's benign lenient-isms (unquoted primitives) fail strict parsing and simply fall
+     * through to the repair-then-lenient path, exactly as before.
+     */
+    private val strictJson = Json
+
     fun parse(raw: String): ParsedIngest = parseOrNull(raw) ?: EMPTY
 
     /**
@@ -164,15 +179,24 @@ object IngestParser {
         }
 
         return try {
-            val repaired = repairToFixpoint(jsonText)
-            ingestLogger.d(TAG, "parse() repaired JSON: $repaired")
-            val root = json.parseToJsonElement(repaired) as? JsonObject
-                ?: throw SerializationException("Top-level JSON element is not an object: $repaired")
+            // Already-valid output must bypass the repair chain entirely — see strictJson's KDoc.
+            val root = strictParseOrNull(jsonText) ?: run {
+                val repaired = repairToFixpoint(jsonText)
+                ingestLogger.d(TAG, "parse() repaired JSON: $repaired")
+                json.parseToJsonElement(repaired) as? JsonObject
+                    ?: throw SerializationException("Top-level JSON element is not an object: $repaired")
+            }
             root.toParsedIngest()
         } catch (e: SerializationException) {
             ingestLogger.w(TAG, "Failed to parse ingest JSON", e)
             null
         }
+    }
+
+    private fun strictParseOrNull(jsonText: String): JsonObject? = try {
+        strictJson.parseToJsonElement(jsonText) as? JsonObject
+    } catch (_: SerializationException) {
+        null
     }
 
     private fun extractJsonBlock(text: String): String? {

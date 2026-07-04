@@ -110,7 +110,7 @@ fun SmWikiDrawer(
                     contentPadding = androidx.compose.foundation.layout.PaddingValues(12.dp),
                     verticalArrangement = Arrangement.spacedBy(8.dp),
                 ) {
-                    items(entries.take(4)) { entry ->
+                    items(entries) { entry ->
                         Box(
                             modifier = Modifier
                                 .fillMaxWidth()
