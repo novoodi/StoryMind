@@ -116,6 +116,8 @@ fun StoryMindApp(modifier: Modifier = Modifier) {
                         EditorChapterSnapshot(label = it.label, title = it.title, body = it.body)
                     },
                     currentLabel = uiState.currentLabel,
+                    currentTitle = uiState.currentTitle,
+                    onTitleChange = viewModel::onTitleChange,
                     currentBody = uiState.currentBody,
                     onBodyChange = viewModel::onBodyChange,
                     onSave = viewModel::saveAndIngest,

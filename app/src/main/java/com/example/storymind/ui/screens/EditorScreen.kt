@@ -12,14 +12,15 @@ import androidx.compose.foundation.layout.defaultMinSize
 import androidx.compose.foundation.layout.fillMaxSize
 import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.layout.height
+import androidx.compose.foundation.layout.PaddingValues
 import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.layout.size
 import androidx.compose.foundation.layout.width
-import androidx.compose.foundation.rememberScrollState
+import androidx.compose.foundation.lazy.LazyColumn
+import androidx.compose.foundation.lazy.itemsIndexed
 import androidx.compose.foundation.shape.CircleShape
 import androidx.compose.foundation.text.BasicTextField
 import androidx.compose.foundation.text.KeyboardOptions
-import androidx.compose.foundation.verticalScroll
 import androidx.compose.material3.Text
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.LaunchedEffect
@@ -66,6 +67,8 @@ fun EditorScreen(
     onAnalyzePending: () -> Unit,
     previousChapters: List<EditorChapterSnapshot>,
     currentLabel: String,
+    currentTitle: String,
+    onTitleChange: (String) -> Unit,
     currentBody: String,
     onBodyChange: (String) -> Unit,
     onSave: () -> Unit,
@@ -119,6 +122,8 @@ fun EditorScreen(
                 spellCheck = spellCheck,
                 previousChapters = previousChapters,
                 currentLabel = currentLabel,
+                currentTitle = currentTitle,
+                onTitleChange = onTitleChange,
                 currentBody = currentBody,
                 onBodyChange = onBodyChange,
             )
@@ -198,12 +203,22 @@ private fun FirstChapterHint(modifier: Modifier = Modifier) {
     }
 }
 
+/**
+ * Editor scroll surface. A [LazyColumn], not a `verticalScroll` [Column]: every previously-saved
+ * chapter is rendered read-only above the draft, and folding them all into one eager column
+ * re-composed every previous chapter's paragraphs on each recomposition — an editor with dozens of
+ * chapters would carry that cost on every keystroke. As lazy items, off-screen chapters aren't
+ * composed at all. The draft's title/body fields are the final items; the shake animation wraps
+ * the whole list.
+ */
 @Composable
 private fun EditorBody(
     shakeTrigger: Int,
     spellCheck: Boolean,
     previousChapters: List<EditorChapterSnapshot>,
     currentLabel: String,
+    currentTitle: String,
+    onTitleChange: (String) -> Unit,
     currentBody: String,
     onBodyChange: (String) -> Unit,
 ) {
@@ -223,19 +238,22 @@ private fun EditorBody(
         }
     }
 
-    val scroll = rememberScrollState()
-    Column(
+    val isFirstEverChapter = previousChapters.isEmpty()
+    LazyColumn(
         modifier = Modifier
             .fillMaxSize()
             .graphicsLayer { translationX = shakeX.value }
-            .background(SmColors.surfaceBase)
-            .verticalScroll(scroll)
-            .padding(horizontal = 22.dp, vertical = 22.dp),
+            .background(SmColors.surfaceBase),
+        contentPadding = PaddingValues(horizontal = 22.dp, vertical = 22.dp),
     ) {
-        previousChapters.forEachIndexed { index, chapter ->
-            if (index > 0) {
+        itemsIndexed(previousChapters) { index, chapter ->
+            PreviousChapterBlock(showLabel = index > 0, chapter = chapter)
+        }
+
+        if (previousChapters.isNotEmpty()) {
+            item {
                 Text(
-                    text = chapter.label,
+                    text = currentLabel,
                     color = SmColors.textTertiary,
                     fontFamily = Pretendard,
                     fontWeight = FontWeight.Bold,
@@ -243,32 +261,57 @@ private fun EditorBody(
                     modifier = Modifier.padding(top = 10.dp, bottom = 10.dp),
                 )
             }
-            if (chapter.title != null) {
-                Text(
-                    text = chapter.title,
-                    color = SmColors.textPrimary,
-                    fontFamily = Pretendard,
-                    fontWeight = FontWeight.Bold,
-                    fontSize = 30.sp,
-                    lineHeight = 36.sp,
-                    modifier = Modifier.padding(bottom = 18.dp),
-                )
-            }
-            chapter.body.split(Regex("\n+")).filter { it.isNotBlank() }.forEach { paragraph ->
-                Text(
-                    text = paragraph,
-                    color = SmColors.textPrimary,
-                    fontFamily = Pretendard,
-                    fontSize = 18.sp,
-                    lineHeight = 32.sp,
-                    modifier = Modifier.padding(bottom = 18.dp),
-                )
-            }
         }
 
-        if (previousChapters.isNotEmpty()) {
+        item {
+            EditorTitleField(value = currentTitle, onValueChange = onTitleChange)
+        }
+
+        item {
+            Box(modifier = Modifier.fillMaxWidth()) {
+                BasicTextField(
+                    value = currentBody,
+                    onValueChange = onBodyChange,
+                    textStyle = TextStyle(
+                        color = SmColors.textPrimary,
+                        fontFamily = Pretendard,
+                        fontSize = 18.sp,
+                        lineHeight = 32.sp,
+                    ),
+                    cursorBrush = SolidColor(SmColors.brand),
+                    // 설정의 "맞춤법 검사" 토글을 IME 자동 교정 힌트로 전달 — 소설 집필 중
+                    // 원치 않는 자동 수정을 끌 수 있는 실제 관찰 가능한 동작이다.
+                    keyboardOptions = KeyboardOptions(autoCorrectEnabled = spellCheck),
+                    modifier = Modifier.fillMaxWidth().defaultMinSize(minHeight = 420.dp),
+                    decorationBox = { innerTextField ->
+                        if (currentBody.isEmpty() && !isFirstEverChapter) {
+                            Text(
+                                text = "이어서 써보세요…",
+                                color = SmColors.textTertiary,
+                                fontFamily = Pretendard,
+                                fontSize = 18.sp,
+                                lineHeight = 32.sp,
+                            )
+                        }
+                        innerTextField()
+                    },
+                )
+                if (currentBody.isEmpty() && isFirstEverChapter) {
+                    FirstChapterHint(modifier = Modifier.align(Alignment.Center))
+                }
+            }
+        }
+    }
+}
+
+/** One read-only previous chapter in the editor scroll. [showLabel] mirrors the original
+ * "first previous chapter carries no label header" behavior (index > 0). */
+@Composable
+private fun PreviousChapterBlock(showLabel: Boolean, chapter: EditorChapterSnapshot) {
+    Column(modifier = Modifier.fillMaxWidth()) {
+        if (showLabel) {
             Text(
-                text = currentLabel,
+                text = chapter.label,
                 color = SmColors.textTertiary,
                 fontFamily = Pretendard,
                 fontWeight = FontWeight.Bold,
@@ -276,41 +319,61 @@ private fun EditorBody(
                 modifier = Modifier.padding(top = 10.dp, bottom = 10.dp),
             )
         }
-
-        val isFirstEverChapter = previousChapters.isEmpty()
-        Box(modifier = Modifier.fillMaxWidth()) {
-            BasicTextField(
-                value = currentBody,
-                onValueChange = onBodyChange,
-                textStyle = TextStyle(
-                    color = SmColors.textPrimary,
-                    fontFamily = Pretendard,
-                    fontSize = 18.sp,
-                    lineHeight = 32.sp,
-                ),
-                cursorBrush = SolidColor(SmColors.brand),
-                // 설정의 "맞춤법 검사" 토글을 IME 자동 교정 힌트로 전달 — 소설 집필 중
-                // 원치 않는 자동 수정을 끌 수 있는 실제 관찰 가능한 동작이다.
-                keyboardOptions = KeyboardOptions(autoCorrectEnabled = spellCheck),
-                modifier = Modifier.fillMaxWidth().defaultMinSize(minHeight = 420.dp),
-                decorationBox = { innerTextField ->
-                    if (currentBody.isEmpty() && !isFirstEverChapter) {
-                        Text(
-                            text = "이어서 써보세요…",
-                            color = SmColors.textTertiary,
-                            fontFamily = Pretendard,
-                            fontSize = 18.sp,
-                            lineHeight = 32.sp,
-                        )
-                    }
-                    innerTextField()
-                },
+        if (chapter.title != null) {
+            Text(
+                text = chapter.title,
+                color = SmColors.textPrimary,
+                fontFamily = Pretendard,
+                fontWeight = FontWeight.Bold,
+                fontSize = 30.sp,
+                lineHeight = 36.sp,
+                modifier = Modifier.padding(bottom = 18.dp),
             )
-            if (currentBody.isEmpty() && isFirstEverChapter) {
-                FirstChapterHint(modifier = Modifier.align(Alignment.Center))
-            }
+        }
+        chapter.body.split(Regex("\n+")).filter { it.isNotBlank() }.forEach { paragraph ->
+            Text(
+                text = paragraph,
+                color = SmColors.textPrimary,
+                fontFamily = Pretendard,
+                fontSize = 18.sp,
+                lineHeight = 32.sp,
+                modifier = Modifier.padding(bottom = 18.dp),
+            )
         }
     }
+}
+
+/** Optional per-chapter title input for the draft, styled like the read-only title above but
+ * editable with a placeholder. Single-line — a title is a heading, not a paragraph. */
+@Composable
+private fun EditorTitleField(value: String, onValueChange: (String) -> Unit) {
+    BasicTextField(
+        value = value,
+        onValueChange = onValueChange,
+        textStyle = TextStyle(
+            color = SmColors.textPrimary,
+            fontFamily = Pretendard,
+            fontWeight = FontWeight.Bold,
+            fontSize = 30.sp,
+            lineHeight = 36.sp,
+        ),
+        cursorBrush = SolidColor(SmColors.brand),
+        singleLine = true,
+        modifier = Modifier.fillMaxWidth().padding(bottom = 14.dp),
+        decorationBox = { innerTextField ->
+            if (value.isEmpty()) {
+                Text(
+                    text = "제목 (선택)",
+                    color = SmColors.textTertiary,
+                    fontFamily = Pretendard,
+                    fontWeight = FontWeight.Bold,
+                    fontSize = 30.sp,
+                    lineHeight = 36.sp,
+                )
+            }
+            innerTextField()
+        },
+    )
 }
 
 @Composable

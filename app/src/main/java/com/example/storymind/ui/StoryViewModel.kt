@@ -40,6 +40,10 @@ import kotlinx.coroutines.launch
 data class StoryUiState(
     val previousChapters: List<ChapterEntity> = emptyList(),
     val currentChapterIndex: Int = 0,
+    /** Optional per-chapter heading. Blank means "no title" — chapters continuing an episode often
+     * have none. Persisted as `null` (not "") so [com.example.storymind.data.db.ChapterEntity.title]
+     * and the manuscript export stay consistent about absence. */
+    val currentTitle: String = "",
     val currentBody: String = "",
     val wikiEntries: List<WikiEntry> = emptyList(),
     val graphNodes: List<GraphNode> = emptyList(),
@@ -214,11 +218,15 @@ class StoryViewModel(application: Application) : AndroidViewModel(application) {
                 !last.ingested -> Triple(savedChapters.dropLast(1), last.chapterIndex, last.body)
                 else -> Triple(savedChapters, last.chapterIndex + 1, "")
             }
+            // A reopened draft carries its saved title back into the editor; a fresh next chapter
+            // starts blank.
+            val draftTitle = if (last != null && !last.ingested) last.title.orEmpty() else ""
 
             _uiState.update {
                 it.copy(
                     previousChapters = previous,
                     currentChapterIndex = draftIndex,
+                    currentTitle = draftTitle,
                     currentBody = draftBody,
                     wikiEntries = progress.wikiEntries,
                     graphNodes = progress.nodes,
@@ -372,6 +380,13 @@ class StoryViewModel(application: Application) : AndroidViewModel(application) {
         _uiState.update { it.copy(currentBody = body, canAdvance = false) }
     }
 
+    /** Editing the title, like editing the body, invalidates the saved state: the DB row still
+     * holds the old title until the next save, so advancing without re-saving would drop the edit
+     * (rule 3 — a save is what persists and unlocks). */
+    fun onTitleChange(title: String) {
+        _uiState.update { it.copy(currentTitle = title, canAdvance = false) }
+    }
+
     /**
      * 브레인 화면에서 드래그가 끝난 노드의 위치 확정. DB에 영속화하고(탭 전환·재시작을 넘어
      * 살아남도록) 로컬 상태도 같은 값으로 갱신한다 — 챕터 플래그가 안 바뀌는 한
@@ -397,9 +412,10 @@ class StoryViewModel(application: Application) : AndroidViewModel(application) {
 
         val chapterIndex = state.currentChapterIndex
         val label = state.currentLabel
+        val title = state.currentTitle.takeIf { it.isNotBlank() }
 
         viewModelScope.launch {
-            repository.saveChapter(chapterIndex, label, title = null, body = body, ingested = false)
+            repository.saveChapter(chapterIndex, label, title = title, body = body, ingested = false)
             _uiState.update { it.copy(canAdvance = true, lastSaveIngested = false) }
 
             // Any prior lint result belonged to the manuscript that just got overwritten — a
@@ -589,7 +605,7 @@ class StoryViewModel(application: Application) : AndroidViewModel(application) {
         val justSaved = ChapterEntity(
             chapterIndex = state.currentChapterIndex,
             label = state.currentLabel,
-            title = null,
+            title = state.currentTitle.takeIf { it.isNotBlank() },
             body = state.currentBody,
             ingested = state.lastSaveIngested,
         )
@@ -597,6 +613,7 @@ class StoryViewModel(application: Application) : AndroidViewModel(application) {
             it.copy(
                 previousChapters = it.previousChapters + justSaved,
                 currentChapterIndex = it.currentChapterIndex + 1,
+                currentTitle = "",
                 currentBody = "",
                 aiStatus = SmAiStatus.Idle,
                 canAdvance = false,
