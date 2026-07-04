@@ -48,6 +48,7 @@ fun StoryMindApp(modifier: Modifier = Modifier) {
     val lintState by viewModel.lintState.collectAsState()
     val rebuildState by viewModel.rebuildState.collectAsState()
     val backupState by viewModel.backupState.collectAsState()
+    val preRestoreAvailable by viewModel.preRestoreAvailable.collectAsState()
 
     // SAF 계약들. CreateDocument의 파일명 기본값에 날짜를 넣는 것은 launch 시점에 계산한다
     // (컴포지션 시점에 고정하면 자정을 넘긴 세션에서 어제 날짜가 제안된다).
@@ -119,6 +120,7 @@ fun StoryMindApp(modifier: Modifier = Modifier) {
                     orphanIds = uiState.orphanIds,
                     wikiEntries = uiState.wikiEntries,
                     rebuildBanner = rebuildBanner,
+                    onNodeMoved = viewModel::moveNode,
                 )
                 SmTab.Wiki -> WikiScreen(
                     entries = uiState.wikiEntries,
@@ -136,6 +138,8 @@ fun StoryMindApp(modifier: Modifier = Modifier) {
                     // 좁은 필터로는 문서 프로바이더 대부분이 방금 내보낸 백업조차 회색 처리한다.
                     // 잘못된 파일 선택은 어차피 검증(안전장치 a)이 막는다.
                     onImportBackup = { restoreLauncher.launch(arrayOf("*/*")) },
+                    canRollback = preRestoreAvailable,
+                    onRollback = viewModel::stageRollback,
                 )
             }
 
@@ -181,13 +185,19 @@ fun StoryMindApp(modifier: Modifier = Modifier) {
             // (안전장치 b — 여기서 확정해야만 confirmRestore가 진행된다), 나머지는 결과 안내다.
             when (val bs = backupState) {
                 BackupUiState.Idle, BackupUiState.Working -> Unit
-                BackupUiState.RestoreReady -> SmBottomSheet(
+                is BackupUiState.RestoreReady -> SmBottomSheet(
                     isOpen = true,
                     onClose = viewModel::cancelRestore,
-                    title = "백업을 가져올까요?",
-                    description = "현재 데이터를 백업 파일 내용으로 교체합니다. 지금 데이터는 " +
-                        "자동으로 임시 보관됩니다. 교체가 끝나면 앱이 다시 시작돼요.",
-                    conflictLabel = "현재 원고·위키가 백업 내용으로 바뀌어요",
+                    title = if (bs.isRollback) "복원 전 데이터로 되돌릴까요?" else "백업을 가져올까요?",
+                    description = if (bs.isRollback) {
+                        "마지막 복원 직전에 자동 보관된 데이터로 현재 데이터를 교체합니다. " +
+                            "지금 데이터도 다시 임시 보관돼요. 교체가 끝나면 앱이 다시 시작돼요."
+                    } else {
+                        "현재 데이터를 백업 파일 내용으로 교체합니다. 지금 데이터는 " +
+                            "자동으로 임시 보관됩니다. 교체가 끝나면 앱이 다시 시작돼요."
+                    },
+                    conflictLabel = if (bs.isRollback) "현재 원고·위키가 복원 전 데이터로 바뀌어요"
+                    else "현재 원고·위키가 백업 내용으로 바뀌어요",
                     primaryAction = SmSheetAction("교체하고 다시 시작") { viewModel.confirmRestore() },
                     secondaryAction = SmSheetAction("취소") { viewModel.cancelRestore() },
                 )

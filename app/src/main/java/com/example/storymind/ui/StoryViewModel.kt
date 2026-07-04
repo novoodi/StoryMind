@@ -30,6 +30,7 @@ import kotlinx.coroutines.flow.emptyFlow
 import kotlinx.coroutines.flow.filterNotNull
 import kotlinx.coroutines.flow.first
 import kotlinx.coroutines.flow.flatMapLatest
+import kotlinx.coroutines.flow.flowOf
 import kotlinx.coroutines.flow.stateIn
 import kotlinx.coroutines.flow.update
 import kotlinx.coroutines.launch
@@ -84,8 +85,10 @@ sealed interface BackupUiState {
     data object TxtExported : BackupUiState
     data object BackupExported : BackupUiState
     data object ExportFailed : BackupUiState
-    /** 검증 통과, 사용자 확인 대기 — 스테이징 파일이 유지되고 있다. */
-    data object RestoreReady : BackupUiState
+    /** 검증 통과, 사용자 확인 대기 — 스테이징 파일이 유지되고 있다. [isRollback]이면 후보가
+     * SAF 파일이 아니라 복원 직전 자동 백업(pre-restore)이라, 확인 시트의 문구만 달라진다 —
+     * 이후 확정/취소 동작은 완전히 동일하다. */
+    data class RestoreReady(val isRollback: Boolean = false) : BackupUiState
     /** 검증 거부 — 아무것도 바뀌지 않았고 [reason]이 그 이유다(안전장치 a). */
     data class RestoreInvalid(val reason: String) : BackupUiState
     data object RestoreFailed : BackupUiState
@@ -133,7 +136,9 @@ class StoryViewModel(application: Application) : AndroidViewModel(application) {
     /** Chapter whose lint work this ViewModel watches. Unlike [aiWatch], this stays null until
      * [lintCurrentChapter] is actually called — lint is on-demand, so there is no "resume watching
      * after restart" case to handle and no stale-session gate to write (see [toLintUiState]'s
-     * KDoc). */
+     * KDoc). Resetting back to null is meaningful too: it detaches the WorkInfo subscription in
+     * [observeLintWork], which is what keeps a finished lint's record from re-asserting itself
+     * after a re-save invalidated it (see that method's null branch). */
     private val watchedLintChapterIndex = MutableStateFlow<Int?>(null)
 
     private val _lintState = MutableStateFlow<LintUiState>(LintUiState.Idle)
@@ -141,6 +146,12 @@ class StoryViewModel(application: Application) : AndroidViewModel(application) {
 
     private val _backupState = MutableStateFlow<BackupUiState>(BackupUiState.Idle)
     val backupState: StateFlow<BackupUiState> = _backupState
+
+    /** pre-restore 자동 백업이 기기에 존재하는지 — 설정의 "복원 전 데이터로 되돌리기" 노출
+     * 조건. 파일은 [StoryBackupManager.promoteStagedRestore]에서만 만들어지고 그 직후 프로세스가
+     * 재시작되므로, 프로세스당 한 번 init에서 읽으면 충분하다. */
+    private val _preRestoreAvailable = MutableStateFlow(false)
+    val preRestoreAvailable: StateFlow<Boolean> = _preRestoreAvailable
 
     /** Brain/Wiki rebuild banner; also read by [saveAndIngest] to keep the badge on the replay
      * chain while a rebuild is running (the per-save worker defers to it anyway). */
@@ -187,6 +198,11 @@ class StoryViewModel(application: Application) : AndroidViewModel(application) {
                     orphanIds = progress.orphanIds,
                     isModelAvailable = modelAvailable,
                     isLoaded = true,
+                    // A reopened draft was already persisted by a past saveAndIngest, and saving
+                    // is what unlocks the next chapter (rule 3) — losing the unlock to a process
+                    // restart would force a no-op re-save. Editing resets this via onBodyChange,
+                    // same as within a session.
+                    canAdvance = draftBody.isNotBlank(),
                 )
             }
 
@@ -211,6 +227,7 @@ class StoryViewModel(application: Application) : AndroidViewModel(application) {
             if (StoryBackupManager.consumeRestoreCompletedMarker(getApplication())) {
                 _backupState.value = BackupUiState.RestoreCompleted
             }
+            _preRestoreAvailable.value = StoryBackupManager.hasPreRestoreBackup(getApplication())
         }
     }
 
@@ -299,9 +316,17 @@ class StoryViewModel(application: Application) : AndroidViewModel(application) {
     private fun observeLintWork() {
         viewModelScope.launch {
             watchedLintChapterIndex
-                .filterNotNull()
                 .flatMapLatest { index ->
-                    workManager.getWorkInfosForUniqueWorkFlow(LintWorker.uniqueNameFor(index))
+                    when (index) {
+                        // null은 "관찰 대상 없음"으로 실제 emission을 만들어 이전 구독을 끊는다.
+                        // filterNotNull로 null을 삼키면 flatMapLatest가 전환되지 않아 직전
+                        // 챕터의 WorkInfo 구독이 살아남는데, WorkManager DB의 무관한 변경(예:
+                        // 재저장이 IngestWorker를 enqueue하는 것)만으로도 이미 끝난 린트의
+                        // SUCCEEDED WorkInfo가 재방출되어, saveAndIngest가 방금 리셋한 Idle을
+                        // 스테일 Done으로 되덮는 버그가 있었다(2026-07 기기 테스트에서 확인).
+                        null -> flowOf(emptyList())
+                        else -> workManager.getWorkInfosForUniqueWorkFlow(LintWorker.uniqueNameFor(index))
+                    }
                 }
                 .collect { infos -> onLintWorkChanged(infos.firstOrNull()) }
         }
@@ -317,6 +342,19 @@ class StoryViewModel(application: Application) : AndroidViewModel(application) {
 
     fun onBodyChange(body: String) {
         _uiState.update { it.copy(currentBody = body, canAdvance = false) }
+    }
+
+    /**
+     * 브레인 화면에서 드래그가 끝난 노드의 위치 확정. DB에 영속화하고(탭 전환·재시작을 넘어
+     * 살아남도록) 로컬 상태도 같은 값으로 갱신한다 — 챕터 플래그가 안 바뀌는 한
+     * [observeChapterFlags]는 다시 읽지 않으므로, 로컬 갱신이 없으면 화면을 떠났다 돌아올 때
+     * 옛 좌표로 되돌아가 보인다.
+     */
+    fun moveNode(id: String, x: Float, y: Float) {
+        _uiState.update { state ->
+            state.copy(graphNodes = state.graphNodes.map { if (it.id == id) it.copy(x = x, y = y) else it })
+        }
+        viewModelScope.launch { repository.updateNodePosition(id, x, y) }
     }
 
     /**
@@ -442,7 +480,19 @@ class StoryViewModel(application: Application) : AndroidViewModel(application) {
         viewModelScope.launch {
             _backupState.value = BackupUiState.Working
             _backupState.value = when (val v = StoryBackupManager.stageRestore(getApplication(), uri)) {
-                is BackupValidation.Valid -> BackupUiState.RestoreReady
+                is BackupValidation.Valid -> BackupUiState.RestoreReady(isRollback = false)
+                is BackupValidation.Invalid -> BackupUiState.RestoreInvalid(v.rejection.userMessage)
+            }
+        }
+    }
+
+    /** 복원 직전 자동 백업(pre-restore)으로 되돌리기 — [stageRestore]와 같은 검증·확인·확정
+     * 경로를 타되 후보만 내부 파일이다. 진입점 노출 여부는 [preRestoreAvailable]이 결정한다. */
+    fun stageRollback() {
+        viewModelScope.launch {
+            _backupState.value = BackupUiState.Working
+            _backupState.value = when (val v = StoryBackupManager.stagePreRestoreRollback(getApplication())) {
+                is BackupValidation.Valid -> BackupUiState.RestoreReady(isRollback = true)
                 is BackupValidation.Invalid -> BackupUiState.RestoreInvalid(v.rejection.userMessage)
             }
         }
@@ -451,7 +501,7 @@ class StoryViewModel(application: Application) : AndroidViewModel(application) {
     /** 복원 확정 — 안전망 백업과 pending 승격이 성공하면 프로세스를 재시작해 다음 실행이
      * 파일을 교체하게 한다. 성공 경로에서는 이 프로세스가 끝나므로 이후 상태 갱신이 없다. */
     fun confirmRestore() {
-        if (_backupState.value != BackupUiState.RestoreReady) return
+        if (_backupState.value !is BackupUiState.RestoreReady) return
         viewModelScope.launch {
             _backupState.value = BackupUiState.Working
             if (StoryBackupManager.promoteStagedRestore(getApplication())) {

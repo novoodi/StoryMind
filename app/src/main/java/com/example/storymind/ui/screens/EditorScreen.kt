@@ -114,10 +114,14 @@ fun EditorScreen(
                 onBodyChange = onBodyChange,
             )
         }
+        // 저장 버튼은 AI 상태와 절대 결합하지 않는다(CLAUDE.md 규칙 3의 UI 버전): 인제스트는
+        // 화당 수 분, 재구축은 그 몇 배가 걸리는데, 그동안 Analyzing 배지를 저장 잠금으로
+        // 쓰면 작가가 새로 쓴 원고를 저장하지 못한 채 프로세스 사망에 노출된다. 원고 저장
+        // 자체는 밀리초 단위 Room 쓰기이고, 진행 중인 인제스트와의 충돌은 워커의 REPLACE
+        // 정책과 commitIngest의 body 가드가 이미 흡수한다 — 저장을 막을 이유가 없다.
         EditorFormatBar(
             charCount = currentBody.length,
             canSave = currentBody.isNotBlank(),
-            saving = aiStatus == SmAiStatus.Analyzing,
             justSaved = canAdvance,
             onSave = onSave,
             onNextChapter = onNextChapter,
@@ -300,7 +304,6 @@ private fun EditorBody(
 private fun EditorFormatBar(
     charCount: Int,
     canSave: Boolean,
-    saving: Boolean,
     justSaved: Boolean,
     onSave: () -> Unit,
     onNextChapter: () -> Unit,
@@ -358,8 +361,7 @@ private fun EditorFormatBar(
             SmButton(
                 text = "저장",
                 onClick = onSave,
-                enabled = canSave && !saving,
-                loading = saving,
+                enabled = canSave,
                 size = SmButtonSize.Sm,
                 modifier = Modifier.padding(end = 4.dp),
             )

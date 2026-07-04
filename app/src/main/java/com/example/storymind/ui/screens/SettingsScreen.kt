@@ -45,6 +45,8 @@ fun SettingsScreen(
     onExportTxt: () -> Unit = {},
     onExportBackup: () -> Unit = {},
     onImportBackup: () -> Unit = {},
+    canRollback: Boolean = false,
+    onRollback: () -> Unit = {},
 ) {
     var spellCheck by remember { mutableStateOf(true) }
     var autoAnalyze by remember { mutableStateOf(true) }
@@ -99,6 +101,15 @@ fun SettingsScreen(
                 value = if (backupBusy) "처리 중" else "백업 파일로 복원",
                 onClick = if (backupBusy) null else onImportBackup,
             )
+            // 마지막 복원 직전에 자동 보관된 데이터(pre-restore)가 있을 때만 노출 — 복원 확인
+            // 시트의 "지금 데이터는 자동으로 임시 보관됩니다"를 실제로 되돌 수 있게 하는 진입점.
+            if (canRollback) {
+                SettingsRow(
+                    label = "복원 전 데이터로 되돌리기",
+                    value = if (backupBusy) "처리 중" else "마지막 복원 직전 상태로",
+                    onClick = if (backupBusy) null else onRollback,
+                )
+            }
 
             SectionLabel("계정")
             SettingsRow(label = "구독 플랜", value = "스탠다드")

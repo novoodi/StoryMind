@@ -72,6 +72,18 @@ private fun nodeVisual(type: SmBadgeType) = when (type) {
     else -> NodeVisual(SmColors.nodeOrphan, SmColors.nodeOrphanBg)
 }
 
+/** 필터 칩 라벨 → 노드 타입. null은 "전체"(필터 없음). 칩 목록과 이 매핑이 함께 움직여야
+ * 하므로 칩 라벨 리스트도 이 파일의 FILTER_LABELS를 쓴다. */
+private fun filterToType(label: String): SmBadgeType? = when (label) {
+    "인물" -> SmBadgeType.Character
+    "장소" -> SmBadgeType.Place
+    "소품" -> SmBadgeType.Item
+    "사건" -> SmBadgeType.Event
+    else -> null
+}
+
+private val FILTER_LABELS = listOf("전체", "인물", "장소", "소품", "사건")
+
 /** The Second Brain relationship graph — mirrors the prototype's BrainScreen. */
 @Composable
 fun BrainScreen(
@@ -81,6 +93,7 @@ fun BrainScreen(
     wikiEntries: List<WikiEntry>,
     modifier: Modifier = Modifier,
     rebuildBanner: (@Composable () -> Unit)? = null,
+    onNodeMoved: (id: String, x: Float, y: Float) -> Unit = { _, _, _ -> },
 ) {
     var filter by remember { mutableStateOf("전체") }
     var selected by remember { mutableStateOf<String?>(null) }
@@ -89,6 +102,16 @@ fun BrainScreen(
             nodes.forEach { put(it.id, Offset(it.x, it.y)) }
         }
     }
+
+    // 필터는 표시만 거른다(파생 데이터 무접촉): 타입이 걸러진 노드는 그 노드에 닿는 엣지와
+    // 함께 사라진다 — 한쪽 끝만 보이는 엣지는 허공을 가리키는 선이 되기 때문. 선택된 노드가
+    // 필터로 사라지면 선택도 무시해(컴포지션 중 상태를 되쓰는 대신 파생 값으로) 보이지 않는
+    // 노드의 툴팁이 남지 않게 한다.
+    val filterType = filterToType(filter)
+    val visibleNodes = if (filterType == null) nodes else nodes.filter { it.type == filterType }
+    val visibleIds = visibleNodes.mapTo(mutableSetOf()) { it.id }
+    val visibleEdges = edges.filter { it.from in visibleIds && it.to in visibleIds }
+    val visibleSelected = selected?.takeIf { it in visibleIds }
 
     Column(modifier = modifier.fillMaxSize().background(SmColors.surfaceSubtle)) {
         SmToolbar(title = "세컨드 브레인")
@@ -101,7 +124,7 @@ fun BrainScreen(
                 .padding(vertical = 9.dp, horizontal = 15.dp),
             horizontalArrangement = Arrangement.spacedBy(6.dp),
         ) {
-            items(listOf("전체", "인물", "장소", "소품", "사건")) { f ->
+            items(FILTER_LABELS) { f ->
                 val on = f == filter
                 Box(
                     modifier = Modifier
@@ -129,13 +152,14 @@ fun BrainScreen(
 
         Box(modifier = Modifier.weight(1f, fill = true)) {
             GraphCanvas(
-                nodes = nodes,
-                edges = edges,
+                nodes = visibleNodes,
+                edges = visibleEdges,
                 orphanIds = orphanIds,
                 wikiEntries = wikiEntries,
                 positions = positions,
-                selected = selected,
+                selected = visibleSelected,
                 onSelect = { selected = it },
+                onNodeMoved = onNodeMoved,
             )
         }
     }
@@ -150,6 +174,7 @@ private fun GraphCanvas(
     positions: androidx.compose.runtime.snapshots.SnapshotStateMap<String, Offset>,
     selected: String?,
     onSelect: (String?) -> Unit,
+    onNodeMoved: (id: String, x: Float, y: Float) -> Unit,
 ) {
     var pressed by remember { mutableStateOf<String?>(null) }
     val focusId = selected
@@ -217,7 +242,12 @@ private fun GraphCanvas(
                     .pointerInput(node.id) {
                         detectDragGestures(
                             onDragStart = { pressed = node.id },
-                            onDragEnd = { pressed = null },
+                            // 드래그 종료 시에만 영속화 — 프레임마다 DB에 쓰지 않으면서도
+                            // 사용자가 정한 최종 위치가 탭 전환·재시작을 넘어 유지된다.
+                            onDragEnd = {
+                                pressed = null
+                                positions[node.id]?.let { onNodeMoved(node.id, it.x, it.y) }
+                            },
                             onDragCancel = { pressed = null },
                         ) { change, dragAmount ->
                             change.consume()
