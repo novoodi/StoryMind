@@ -28,10 +28,15 @@ data class ChapterProgress(
  *   the moment its last remaining line is gone (that chapter was its sole source). Its node is
  *   dropped with it, and any edge left dangling to a removed node is filtered out below.
  *
- * The one stale case this can't reach: an edge whose *both* endpoints still exist but which only
- * this chapter's previous ingest produced — there's no per-edge chapter provenance to subtract it,
- * so a full rebuild ([com.example.storymind.work.ReplayWorker]) remains the tool for that narrow
- * case (rule 1). A surviving entry dropped from its most-recent chapter keeps its old `chapter`
+ * Edges carry the same per-chapter provenance ([GraphEdge.chapters]) and fold the same way: this
+ * chapter's label is stripped from every existing edge and re-added only to edges the new result
+ * still asserts, so an edge whose chapter set empties out is dropped — even when *both* its
+ * endpoints are still alive because other chapters mention them (the case a bare `(from, to)` edge
+ * could never retract without a full rebuild). Legacy edges migrated from schema v2, which had no
+ * per-edge provenance, carry the sentinel `"?"` instead of a real chapter label; since no chapter
+ * label ever equals `"?"`, the strip never removes it, so those edges persist exactly as they did
+ * before v3 until a full rebuild ([com.example.storymind.work.ReplayWorker]) replaces them with
+ * real provenance. A surviving entry dropped from its most-recent chapter keeps its old `chapter`
  * ("last appearance") field rather than recomputing it — display-only, and rebuild corrects it.
  *
  * [incoming.desc][WikiEntry.desc] is flattened to a single line first: a model-emitted newline
@@ -82,9 +87,24 @@ fun ChapterProgress.merge(result: IngestResult, chapterLabel: String): ChapterPr
     val mergedNodes = survivingExistingNodes + newNodes
 
     val knownIds = mergedNodes.mapTo(mutableSetOf()) { it.id }
-    // 제거된 엔티티를 가리키던 엣지는 함께 떨어뜨린다. 양 끝이 모두 살아있지만 이 화만
-    // 만들었던 엣지는 provenance가 없어 남는다(위 KDoc의 좁은 예외 — 재구축이 정리).
-    val mergedEdges = (edges + result.edges).distinct().filter { it.from in knownIds && it.to in knownIds }
+    // 엣지도 위키 desc 줄과 같은 화 단위 provenance(GraphEdge.chapters)로 접는다: 이 화의 태그를
+    // 모든 기존 엣지에서 먼저 걷어낸 뒤(chapters - chapterLabel), 새 결과가 여전히 가진 엣지에만
+    // 이 화 태그를 다시 붙인다. 그 결과 태그 집합이 0개가 된 엣지 — 이 화만 만들었고 이번 재인제스트가
+    // 더는 언급하지 않는 엣지 — 는 양 끝 노드가 모두 살아있어도 사라진다(예전 KDoc의 "닿지 못하던"
+    // stale 케이스). 센티넬 "?"(v2에서 마이그레이션된 레거시 엣지)는 어떤 화 라벨과도 같지 않아 절대
+    // 안 걷히므로 레거시 엣지는 오늘과 동일하게 유지되고, 전체 재구축이 실제 provenance로 대체한다.
+    val edgeChapters = LinkedHashMap<Pair<String, String>, MutableSet<String>>()
+    edges.forEach { edge ->
+        val kept = edge.chapters - chapterLabel
+        if (kept.isNotEmpty()) edgeChapters.getOrPut(edge.from to edge.to) { linkedSetOf() }.addAll(kept)
+    }
+    result.edges.forEach { edge ->
+        edgeChapters.getOrPut(edge.from to edge.to) { linkedSetOf() }.add(chapterLabel)
+    }
+    // 제거된 엔티티를 가리키던 엣지는 여기서 함께 떨어진다(양 끝이 knownIds에 있어야 유지).
+    val mergedEdges = edgeChapters
+        .map { (endpoints, chapters) -> GraphEdge(endpoints.first, endpoints.second, chapters) }
+        .filter { it.from in knownIds && it.to in knownIds }
 
     val connectedIds = mergedEdges.flatMapTo(mutableSetOf()) { listOf(it.from, it.to) }
     val orphanIds = knownIds - connectedIds

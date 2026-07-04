@@ -27,6 +27,28 @@ val MIGRATION_1_2: Migration = object : Migration(1, 2) {
     }
 }
 
+/** Exposed for the same reason as [MIGRATION_1_2_STATEMENTS] — [StoryDatabaseMigrationTest]'s JVM
+ * smoke runs this exact DDL against a hand-seeded v2 database. */
+internal val MIGRATION_2_3_STATEMENTS: List<String> = listOf(
+    // NOT NULL requires a default because graph_edges may already hold rows, and the default must
+    // match GraphEdgeEntity.chapters' @ColumnInfo(defaultValue = "?") so Room's identity-hash check
+    // passes. "?" is the "provenance unknown" sentinel merge() never strips — see GraphEdge.chapters.
+    "ALTER TABLE graph_edges ADD COLUMN chapters TEXT NOT NULL DEFAULT '?'",
+)
+
+/**
+ * v2 -> v3: adds per-edge chapter provenance (`chapters`) to `graph_edges`, so a re-ingest can
+ * retract a relation a chapter no longer supports even when both its endpoints survive (see
+ * [com.example.storymind.ai.merge]). Legacy edges get the `"?"` sentinel via the column default and
+ * keep behaving as before until a full rebuild. Additive ALTER — no other table changes, and edge
+ * endpoints (derived data, rule 1) are untouched. No `fallbackToDestructiveMigration`.
+ */
+val MIGRATION_2_3: Migration = object : Migration(2, 3) {
+    override fun migrate(db: SupportSQLiteDatabase) {
+        MIGRATION_2_3_STATEMENTS.forEach { db.execSQL(it) }
+    }
+}
+
 @Database(
     entities = [
         ChapterEntity::class,
@@ -35,7 +57,7 @@ val MIGRATION_1_2: Migration = object : Migration(1, 2) {
         GraphEdgeEntity::class,
         OrphanIdEntity::class,
     ],
-    version = 2,
+    version = 3,
     exportSchema = true,
 )
 abstract class StoryDatabase : RoomDatabase() {
@@ -64,7 +86,7 @@ abstract class StoryDatabase : RoomDatabase() {
             StoryDatabase::class.java,
             name,
         )
-            .addMigrations(MIGRATION_1_2)
+            .addMigrations(MIGRATION_1_2, MIGRATION_2_3)
             .build()
 
         /** IngestWorker resolves its database through [get], so worker tests point this singleton

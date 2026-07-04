@@ -1,5 +1,6 @@
 package com.example.storymind.data.db
 
+import androidx.room.ColumnInfo
 import androidx.room.Entity
 import androidx.room.PrimaryKey
 import com.example.storymind.ai.ChapterProgress
@@ -50,6 +51,20 @@ data class GraphNodeEntity(
 data class GraphEdgeEntity(
     val fromId: String,
     val toId: String,
+    /**
+     * [GraphEdge.chapters] serialized as newline-joined chapter labels — the edge's per-chapter
+     * provenance (schema v3). PK stays `(fromId, toId)`: `merge()` already dedups edges by their
+     * two endpoints and unions the chapter sets in memory, so one row per edge is enough and no
+     * per-chapter row/PK change is needed.
+     *
+     * `defaultValue = "?"` must match [MIGRATION_2_3]'s `ADD COLUMN ... DEFAULT '?'`: SQLite can't
+     * add a NOT NULL column to a table with existing rows without a default, and Room's schema
+     * identity-hash check ([StoryDatabaseMigrationTest]) compares the column default, so the entity
+     * has to declare the same one or `runMigrationsAndValidate` fails. The default only ever backs
+     * the migration's backfill of legacy v2 edges (which had no provenance) with the `"?"` sentinel;
+     * every runtime insert supplies this column explicitly.
+     */
+    @ColumnInfo(defaultValue = "?") val chapters: String,
 )
 
 @Entity(tableName = "orphan_ids")
@@ -105,9 +120,14 @@ fun GraphNode.toEntity(): GraphNodeEntity = GraphNodeEntity(
     y = y,
 )
 
-fun GraphEdgeEntity.toDomain(): GraphEdge = GraphEdge(from = fromId, to = toId)
+/** `chapters` is newline-joined ([GraphEdge.chapters] holds "N화" labels, which never contain a
+ * newline). Blank segments are dropped so a legacy sentinel-only edge deserializes to `{"?"}` and
+ * an empty column (should never happen — `merge()` drops chapter-less edges) yields an empty set. */
+fun GraphEdgeEntity.toDomain(): GraphEdge =
+    GraphEdge(from = fromId, to = toId, chapters = chapters.split("\n").filterNot { it.isBlank() }.toSet())
 
-fun GraphEdge.toEntity(): GraphEdgeEntity = GraphEdgeEntity(fromId = from, toId = to)
+fun GraphEdge.toEntity(): GraphEdgeEntity =
+    GraphEdgeEntity(fromId = from, toId = to, chapters = chapters.joinToString("\n"))
 
 data class ChapterProgressSnapshot(
     val wikiEntries: List<WikiEntryEntity>,

@@ -70,6 +70,32 @@ class StoryDatabaseMigrationTest {
         }
     }
 
+    @Test
+    fun migrate2To3_preservesExistingEdgeAndBackfillsSentinelProvenance() {
+        openConnection().use { connection ->
+            seedVersion2Schema(connection)
+            insertVersion2Edge(connection)
+
+            MIGRATION_2_3_STATEMENTS.forEach { sql ->
+                connection.createStatement().use { it.execute(sql) }
+            }
+
+            connection.createStatement().use { statement ->
+                val rows = statement.executeQuery("SELECT fromId, toId, chapters FROM graph_edges")
+                assertTrue("expected the pre-migration edge row to survive", rows.next())
+                assertEquals("yul", rows.getString("fromId"))
+                assertEquals("jinseong", rows.getString("toId"))
+                assertEquals(
+                    "a legacy v2 edge (no per-edge provenance) must backfill to the '?' sentinel " +
+                        "so merge() never strips it",
+                    "?",
+                    rows.getString("chapters"),
+                )
+                assertTrue("expected exactly one edge row", !rows.next())
+            }
+        }
+    }
+
     private fun openConnection(): Connection =
         DriverManager.getConnection("jdbc:sqlite:${dbFile.absolutePath}")
 
@@ -110,6 +136,44 @@ class StoryDatabaseMigrationTest {
                 "INSERT INTO chapters (chapterIndex, label, title, body, ingested) VALUES " +
                     "(0, '1화', '과거의 흔적', '옛 마을에 도착했다.', 1)"
             )
+        }
+    }
+
+    /** Mirrors the CREATE TABLE Room generates for the schema v2 entities — same as
+     * [seedVersion1Schema] except `chapters` gains the two nullable ingest-provenance columns
+     * (`ingestEngine`, `ingestPromptVersion`). Only `graph_edges` changes in v3, so the other four
+     * tables are included unmodified to make sure MIGRATION_2_3 doesn't disturb them. */
+    private fun seedVersion2Schema(connection: Connection) {
+        connection.createStatement().use { statement ->
+            statement.execute(
+                "CREATE TABLE `chapters` (`chapterIndex` INTEGER NOT NULL, `label` TEXT NOT NULL, " +
+                    "`title` TEXT, `body` TEXT NOT NULL, `ingested` INTEGER NOT NULL, " +
+                    "`ingestEngine` TEXT, `ingestPromptVersion` INTEGER, PRIMARY KEY(`chapterIndex`))"
+            )
+            statement.execute(
+                "CREATE TABLE `wiki_entries` (`id` TEXT NOT NULL, `type` TEXT NOT NULL, " +
+                    "`name` TEXT NOT NULL, `desc` TEXT NOT NULL, `chapter` TEXT NOT NULL, " +
+                    "PRIMARY KEY(`id`))"
+            )
+            statement.execute(
+                "CREATE TABLE `graph_nodes` (`id` TEXT NOT NULL, `type` TEXT NOT NULL, " +
+                    "`label` TEXT NOT NULL, `x` REAL NOT NULL, `y` REAL NOT NULL, " +
+                    "PRIMARY KEY(`id`))"
+            )
+            statement.execute(
+                "CREATE TABLE `graph_edges` (`fromId` TEXT NOT NULL, `toId` TEXT NOT NULL, " +
+                    "PRIMARY KEY(`fromId`, `toId`))"
+            )
+            statement.execute(
+                "CREATE TABLE `orphan_ids` (`id` TEXT NOT NULL, PRIMARY KEY(`id`))"
+            )
+            statement.execute("PRAGMA user_version = 2")
+        }
+    }
+
+    private fun insertVersion2Edge(connection: Connection) {
+        connection.createStatement().use { statement ->
+            statement.execute("INSERT INTO graph_edges (fromId, toId) VALUES ('yul', 'jinseong')")
         }
     }
 }
