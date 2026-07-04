@@ -12,6 +12,7 @@ import com.example.storymind.platform.IngestEngineProvider
 import com.example.storymind.ui.components.SmAiStatus
 import kotlinx.coroutines.Job
 import kotlinx.coroutines.cancel
+import kotlinx.coroutines.delay
 import kotlinx.coroutines.flow.first
 import kotlinx.coroutines.runBlocking
 import kotlinx.coroutines.withTimeout
@@ -93,7 +94,7 @@ class StoryViewModelAutoAnalyzeTest {
         withTimeout(TIMEOUT_MS) { viewModel.uiState.first { it.isLoaded } }
         viewModel.setAutoAnalyze(false)
 
-        // 자동 분석 OFF로 두 화를 저장 — 둘 다 미분석 상태로 쌓인다.
+        // 자동 분석 OFF로 두 화를 저장 — 둘 다 미분석 상태로 DB에 쌓인다.
         viewModel.onBodyChange("첫 번째 화 본문.")
         viewModel.saveAndIngest()
         withTimeout(TIMEOUT_MS) { viewModel.uiState.first { it.canAdvance } }
@@ -101,12 +102,17 @@ class StoryViewModelAutoAnalyzeTest {
         viewModel.onBodyChange("두 번째 화 본문.")
         viewModel.saveAndIngest()
 
-        withTimeout(TIMEOUT_MS) { viewModel.pendingAnalysisCount.first { it == 2 } }
+        // 배너 카운트는 "지금 편집 중인 화"를 제외한다: 2화가 현재 화이므로, 진행을 마친 1화만
+        // 미분석으로 센다(둘 다 ingested=false여도). 이 제외가 자동 저장을 배너에 안 보이게 한다.
+        withTimeout(TIMEOUT_MS) { viewModel.pendingAnalysisCount.first { it == 1 } }
 
-        // "지금 분석" → 비파괴 resume이 두 화를 순서대로 인제스트해 미분석 수가 0으로 떨어진다.
+        // "지금 분석" → 비파괴 resume이 두 화를 순서대로 인제스트한다. 완료 신호로 배너 카운트를
+        // 쓰지 않는 이유: 카운트는 현재 화(2화)를 제외하므로, 1화만 인제스트돼도 0으로 떨어져
+        // 2화 인제스트 완료 전에 조기 통과한다. 실제 두 화가 모두 ingested=true가 될 때까지 기다린다.
         viewModel.analyzePending()
-        withTimeout(TIMEOUT_MS) { viewModel.pendingAnalysisCount.first { it == 0 } }
-
+        withTimeout(TIMEOUT_MS) {
+            while (db.storyDao().loadChapters().count { it.ingested } != 2) delay(50)
+        }
         assertEquals(2, db.storyDao().loadChapters().count { it.ingested })
     }
 

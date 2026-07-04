@@ -22,12 +22,16 @@ import com.example.storymind.work.LintWorker
 import com.example.storymind.work.ReplayWorker
 import com.example.storymind.ai.ingestLogger
 import kotlinx.coroutines.ExperimentalCoroutinesApi
+import kotlinx.coroutines.FlowPreview
 import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.flow.SharingStarted
 import kotlinx.coroutines.flow.StateFlow
 import kotlinx.coroutines.flow.catch
 import kotlinx.coroutines.flow.combine
+import kotlinx.coroutines.flow.debounce
+import kotlinx.coroutines.flow.distinctUntilChanged
 import kotlinx.coroutines.flow.emptyFlow
+import kotlinx.coroutines.flow.filter
 import kotlinx.coroutines.flow.filterNotNull
 import kotlinx.coroutines.flow.first
 import kotlinx.coroutines.flow.flatMapLatest
@@ -154,6 +158,14 @@ class StoryViewModel(application: Application) : AndroidViewModel(application) {
     private val _uiState = MutableStateFlow(StoryUiState())
     val uiState: StateFlow<StoryUiState> = _uiState
 
+    /** (index, body, title) last written to the chapters table by an explicit save or an autosave.
+     * The guard that keeps the debounced autosave from re-writing an unchanged draft (and from
+     * flipping ingested=true back to false when nothing actually changed). Seeded in init from the
+     * reopened draft; declared ahead of the init block that assigns it. */
+    private var lastPersistedDraft: DraftSnapshot? = null
+
+    private data class DraftSnapshot(val index: Int, val body: String, val title: String)
+
     /** Chapter whose lint work this ViewModel watches. Unlike [aiWatch], this stays null until
      * [lintCurrentChapter] is actually called — lint is on-demand, so there is no "resume watching
      * after restart" case to handle and no stale-session gate to write (see [toLintUiState]'s
@@ -181,18 +193,25 @@ class StoryViewModel(application: Application) : AndroidViewModel(application) {
     val autoBackupAvailable: StateFlow<Boolean> = _autoBackupAvailable
 
     /**
-     * Non-blank chapters that have no ingested wiki behind them yet — the count the editor's
-     * "분석 안 된 화 n개" banner reports. Grows whenever a chapter is saved without being analyzed:
-     * auto-analyze off, the model absent at save time, or a chapter saved during a running rebuild.
+     * Finished-but-unanalyzed chapters — the count the editor's "분석 안 된 화 n개" banner reports.
+     * Grows whenever a chapter is saved without being analyzed: auto-analyze off, the model absent
+     * at save time, or a chapter saved during a running rebuild. The chapter currently open in the
+     * editor is excluded: autosave persists it as a draft (ingested=false) while the writer is still
+     * typing, and a chapter you are actively writing is "in progress", not "finished but unanalyzed"
+     * — it starts counting the moment you advance past it (its index is no longer the current one),
+     * which is when the writer considers it done.
      * Read straight from the chapters table (not WorkManager) so it survives process death and can
      * never disagree with what a resume would actually pick up — same source [ReplayWorker] itself
      * reads. The banner's *visibility* gate (nothing running, model present, not already showing a
      * failure badge) lives in the composable, which already holds aiStatus/rebuild/model state;
      * this flow is only the count.
      */
-    val pendingAnalysisCount: StateFlow<Int> = repository.observeChapters()
-        .map { chapters -> chapters.count { it.body.isNotBlank() && !it.ingested } }
-        .stateIn(viewModelScope, SharingStarted.Eagerly, 0)
+    val pendingAnalysisCount: StateFlow<Int> = combine(
+        repository.observeChapters(),
+        _uiState.map { it.currentChapterIndex }.distinctUntilChanged(),
+    ) { chapters, currentIndex ->
+        chapters.count { it.body.isNotBlank() && !it.ingested && it.chapterIndex != currentIndex }
+    }.stateIn(viewModelScope, SharingStarted.Eagerly, 0)
 
     /** Brain/Wiki rebuild banner; also read by [saveAndIngest] to keep the badge on the replay
      * chain while a rebuild is running (the per-save worker defers to it anyway). */
@@ -250,6 +269,10 @@ class StoryViewModel(application: Application) : AndroidViewModel(application) {
                     canAdvance = draftBody.isNotBlank(),
                 )
             }
+            // Seed the autosave guard with the reopened draft so the first idle tick after launch is
+            // a no-op — init already reflects exactly what is in the chapters table.
+            lastPersistedDraft = draftBody.takeIf { it.isNotBlank() }
+                ?.let { DraftSnapshot(draftIndex, it, draftTitle) }
 
             // Cold-start watch target: a replay chain that is still active — or FAILED with
             // chapters actually missing — outranks the last chapter's own work record, because
@@ -266,6 +289,7 @@ class StoryViewModel(application: Application) : AndroidViewModel(application) {
         observeIngestWork()
         observeLintWork()
         observeChapterFlags()
+        observeAutoSave()
         viewModelScope.launch {
             // 복원은 프로세스 재시작 너머에서 완료되므로(StoryBackupManager KDoc 원칙 2),
             // 완료 안내는 새 프로세스의 첫 ViewModel이 마커를 소비해서 띄운다.
@@ -410,6 +434,43 @@ class StoryViewModel(application: Application) : AndroidViewModel(application) {
         viewModelScope.launch { repository.updateNodePosition(id, x, y) }
     }
 
+    /** The single path that writes the working chapter's manuscript to the chapters table, shared by
+     * [saveAndIngest] and [observeAutoSave]. Always `ingested = false` — persisting the manuscript
+     * and analyzing it are separate steps (rule 3); analysis is triggered only by an explicit save.
+     * Records [lastPersistedDraft] so autosave can skip an unchanged draft. */
+    private suspend fun persistDraft(index: Int, label: String, title: String?, body: String) {
+        repository.saveChapter(index, label, title = title, body = body, ingested = false)
+        lastPersistedDraft = DraftSnapshot(index, body, title.orEmpty())
+    }
+
+    /**
+     * Debounced autosave: while the writer types, persist the working chapter's body/title to its
+     * draft row (ingested=false) so an app kill or crash never loses unsaved typing — the gap that
+     * existed because [onBodyChange] only updates in-memory [_uiState], not the DB. It rides the
+     * exact same draft mechanism a manual save uses, so a restored draft reopens through init's
+     * `!last.ingested` branch with no new table or restore code.
+     *
+     * Deliberately invisible: it never triggers ingest (that is minutes of on-device generation —
+     * only an explicit save should pay it), never touches canAdvance/aiStatus/lint. The manual
+     * "저장" button remains the thing that unlocks the next chapter and starts analysis. The guard
+     * skips blank bodies and any snapshot equal to the last persisted one (including the seed from
+     * init), so a load or an explicit save doesn't provoke a redundant write.
+     */
+    @OptIn(FlowPreview::class)
+    private fun observeAutoSave() {
+        viewModelScope.launch {
+            _uiState
+                .filter { it.isLoaded }
+                .map { DraftSnapshot(it.currentChapterIndex, it.currentBody, it.currentTitle) }
+                .distinctUntilChanged()
+                .debounce(AUTO_SAVE_DEBOUNCE_MS)
+                .collect { snap ->
+                    if (snap.body.isBlank() || snap == lastPersistedDraft) return@collect
+                    persistDraft(snap.index, "${snap.index + 1}화", snap.title.takeIf { it.isNotBlank() }, snap.body)
+                }
+        }
+    }
+
     /**
      * Persists the manuscript first — that alone unlocks the next chapter (rule 3) — then hands
      * the ingest to [IngestWorker]. From here on the badge is driven by [onIngestWorkChanged];
@@ -425,7 +486,7 @@ class StoryViewModel(application: Application) : AndroidViewModel(application) {
         val title = state.currentTitle.takeIf { it.isNotBlank() }
 
         viewModelScope.launch {
-            repository.saveChapter(chapterIndex, label, title = title, body = body, ingested = false)
+            persistDraft(chapterIndex, label, title, body)
             _uiState.update { it.copy(canAdvance = true, lastSaveIngested = false) }
 
             // Any prior lint result belonged to the manuscript that just got overwritten — a
@@ -654,6 +715,10 @@ class StoryViewModel(application: Application) : AndroidViewModel(application) {
     }
 
     private companion object {
+        /** How long typing must pause before an autosave fires. Long enough not to write on every
+         * keystroke, short enough that a crash loses at most a sentence or two. */
+        const val AUTO_SAVE_DEBOUNCE_MS = 1_500L
+
         /**
          * Collapses a replay chain's WorkInfos (one per self-appended hop, so usually several)
          * into the single state [toAiStatus] understands. Any hop still pending means the chain
